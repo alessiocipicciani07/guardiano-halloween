@@ -74,6 +74,7 @@ const typeOf = g => typeById(g.typeId) || { id: '', name: 'Senza tipo', price: 0
 const remaining = g => g.size - g.inside;
 const doorSales = () => !!db.event.doorSales;
 const dueOf = g => (g.paid || !doorSales() ? 0 : typeOf(g).price * g.size);
+const usesTypes = () => doorSales(); // i tipi di biglietto servono solo per i prezzi alla porta: nel modello solo prepagato non si vedono
 const unpaidBlock = g => !doorSales() && !g.paid && remaining(g) > 0; // solo prepagato: chi non risulta pagato non entra
 const insideTotal = () => sum(db.guests, g => g.inside);
 const capacity = () => Number(db.event.capacity) || 0;
@@ -104,8 +105,8 @@ function addGuest(f) {
     name: String(f.name || '').trim() || 'Senza nome',
     size: clamp(Math.round(+f.size) || 1, 1, 30),
     inside: 0,
-    typeId: f.typeId,
-    paid: f.paid ?? isPrepaid(typeById(f.typeId)),
+    typeId: f.typeId || db.types[0].id,
+    paid: f.paid ?? (usesTypes() ? isPrepaid(typeById(f.typeId)) : true),
     notes: String(f.notes || '').trim(),
     arrivedAt: null,
     createdAt: Date.now(),
@@ -244,7 +245,7 @@ function showGuest(id) {
     </div></div>` : '';
   openSheet(`
     <div class="sheet-head"><h2>${esc(g.name)}</h2>${closeBtn()}</div>
-    <div class="meta"><span class="pill ${st}">${STATUS[st]}</span><span class="tag">${esc(t.name)}</span><span class="tag">${persone(g.size)}</span><span class="tag code">${esc(g.code)}</span></div>
+    <div class="meta"><span class="pill ${st}">${STATUS[st]}</span>${usesTypes() ? `<span class="tag">${esc(t.name)}</span>` : ''}<span class="tag">${persone(g.size)}</span><span class="tag code">${esc(g.code)}</span></div>
     ${g.notes ? `<div class="notebox">${esc(g.notes)}</div>` : ''}
     ${door}${exits}
     <div class="foot">
@@ -279,9 +280,9 @@ function showEdit(id) {
     <form id="guestForm" class="stack" autocomplete="off">
       <label class="field"><span>Nome</span><input type="text" name="name" required value="${esc(g?.name)}" autocapitalize="words" placeholder="Es. Giulia Rossi"></label>
       <div class="stack"><div class="label">Numero di persone</div>${stepper('size', g?.size ?? 1, Math.max(1, g?.inside ?? 1), 30)}</div>
-      <label class="field"><span>Tipo di biglietto</span><select name="typeId">${typeOptions(g?.typeId ?? t0?.id)}</select></label>
-      <label class="check"><input type="checkbox" name="paid" ${(g ? g.paid : isPrepaid(t0)) ? 'checked' : ''}>Pagamento ricevuto</label>
-      <label class="field"><span>Note (visibili alla porta)</span><textarea name="notes" placeholder="Es. tavolo riservato, organizzatore…">${esc(g?.notes)}</textarea></label>
+      ${usesTypes() ? `<label class="field"><span>Tipo di biglietto</span><select name="typeId">${typeOptions(g?.typeId ?? t0?.id)}</select></label>` : ''}
+      <label class="check"><input type="checkbox" name="paid" ${(g ? g.paid : (usesTypes() ? isPrepaid(t0) : true)) ? 'checked' : ''}>Pagamento ricevuto</label>
+      <label class="field"><span>Note (visibili alla porta)</span><textarea name="notes" placeholder="Es. organizzatore, allergie…">${esc(g?.notes)}</textarea></label>
       <button class="btn big block primary" type="submit">${g ? 'Salva' : 'Aggiungi alla lista'}</button>
       <div class="foot">
         ${g ? `<button type="button" class="btn danger" data-act="deleteGuest" data-id="${g.id}">Elimina</button>` : ''}
@@ -290,14 +291,14 @@ function showEdit(id) {
     </form>`, { gid: g?.id, paidTouched: !!g });
   const form = $('#guestForm', sheet);
   $('[name=paid]', form).addEventListener('change', () => { sheetCtx.paidTouched = true; });
-  $('[name=typeId]', form).addEventListener('change', e => {
+  $('[name=typeId]', form)?.addEventListener('change', e => {
     if (!sheetCtx.paidTouched) $('[name=paid]', form).checked = isPrepaid(typeById(e.target.value));
   });
 }
 
 function submitGuest(form) {
   const f = new FormData(form);
-  const data = { name: f.get('name'), size: stepVal('size'), typeId: f.get('typeId'), paid: f.get('paid') === 'on', notes: f.get('notes') };
+  const data = { name: f.get('name'), size: stepVal('size'), typeId: f.get('typeId') || (sheetCtx.gid ? byId(sheetCtx.gid).typeId : db.types[0].id), paid: f.get('paid') === 'on', notes: f.get('notes') };
   if (!String(data.name).trim()) return;
   if (sheetCtx.gid) {
     Object.assign(byId(sheetCtx.gid), { ...data, name: data.name.trim(), notes: data.notes.trim() });
@@ -394,7 +395,7 @@ function ticketCanvas(g) {
   x.fillStyle = '#fff'; fitText(x, g.name, W - 160, 76, 800, SANS);
   x.fillText(g.name, W / 2, 480);
   x.fillStyle = '#a498b4'; x.font = `600 34px ${SANS}`;
-  x.fillText(`${persone(g.size)} · ${typeOf(g).name}`, W / 2, 540);
+  x.fillText(usesTypes() ? `${persone(g.size)} · ${typeOf(g).name}` : persone(g.size), W / 2, 540);
 
   x.fillStyle = '#fff'; roundRect(x, 150, 590, 600, 600, 36); x.fill();
   QR.draw(x, g.code, 170, 610, 560, { dark: '#0d0a12', light: '#ffffff', margin: 2 });
@@ -430,7 +431,7 @@ function printTickets(list) {
   $('#print').innerHTML = list.map(g => `<div class="pt">
     <div class="pt-head">${esc(db.event.name)}</div><div class="pt-date">${esc(dateStr)}</div>
     <img alt="" src="${QR.dataURL(g.code, 6, { margin: 2 })}">
-    <div class="pt-nm">${esc(g.name)}</div><div class="pt-sub">${persone(g.size)} · ${esc(typeOf(g).name)}</div>
+    <div class="pt-nm">${esc(g.name)}</div><div class="pt-sub">${persone(g.size)}${usesTypes() ? ` · ${esc(typeOf(g).name)}` : ''}</div>
     <div class="pt-code">${esc(g.code)}</div></div>`).join('');
   window.print();
 }
@@ -470,7 +471,7 @@ function guestRow(g) {
   return `<button class="row" data-act="openGuest" data-id="${g.id}">
     <div class="row-main">
       <div class="nm">${esc(g.name)}</div>
-      <div class="sub">${esc(typeOf(g).name)} · ${persone(g.size)}${st === 'part' ? ` · dentro ${g.inside}` : ''}${due ? ` · <span class="due">da pagare ${eur(due)}</span>` : (!g.paid && !doorSales() ? ' · <span class="due">non pagato</span>' : '')}</div>
+      <div class="sub">${usesTypes() ? `${esc(typeOf(g).name)} · ` : ''}${persone(g.size)}${st === 'part' ? ` · dentro ${g.inside}` : ''}${due ? ` · <span class="due">da pagare ${eur(due)}</span>` : (!g.paid && !doorSales() ? ' · <span class="due">non pagato</span>' : '')}</div>
       ${g.notes ? `<div class="note">${esc(g.notes)}</div>` : ''}
     </div>
     <span class="pill ${st}">${STATUS[st]}</span></button>`;
@@ -570,7 +571,7 @@ function updateOspiti() {
     <div class="cols"><button class="btn" data-act="importCsv">Importa CSV</button><button class="btn" data-act="csvTemplate">Scarica modello</button></div>
     <button class="btn block" data-act="printAll">Stampa tutti i biglietti QR</button>
     ${G.length ? '' : '<button class="btn block ghost" data-act="demo">Carica ospiti di prova</button>'}
-    <p class="muted" style="font-size:14px">Colonne del CSV: Nome, Persone, Tipo, Pagato, Note, Codice; basta Nome. Puoi reimportare il file quando cambia: chi c’è già viene aggiornato (riconosciuto dal codice o dal nome), non duplicato.</p>`;
+    <p class="muted" style="font-size:14px">Colonne del CSV: Nome, Persone, ${usesTypes() ? 'Tipo, ' : ''}Pagato, Note, Codice; basta Nome. Puoi reimportare il file quando cambia: chi c’è già viene aggiornato (riconosciuto dal codice o dal nome), non duplicato.</p>`;
 }
 
 /* ---------- Serata ---------- */
@@ -580,14 +581,14 @@ function renderSerata() {
   const total = sum(db.guests, g => g.size);
   const perType = db.types.map(t => {
     const es = ins.filter(e => e.typeId === t.id);
-    return { t, n: sum(es, e => e.n), amount: sum(es, e => e.amount || 0), listed: sum(db.guests.filter(g => g.typeId === t.id), g => g.size) };
+    return { t, n: sum(es, e => e.n), amount: sum(es, e => e.amount || 0) };
   });
   const ds = doorSales(), outN = sum(live.filter(e => e.kind === 'out'), e => e.n);
   const logRows = db.log.slice(-40).reverse().map(e => `
     <div class="log-item ${e.undone ? 'undone' : ''}">
       <time>${hhmm(e.t)}</time>
       <div class="what"><span class="${e.kind === 'in' ? 'tag-in' : 'tag-out'}">${e.kind === 'in' ? 'Ingresso' : 'Uscita'} ×${e.n}</span> ${esc(e.name)}
-        <small>${esc(typeById(e.typeId)?.name || '—')}${e.amount ? ` · incassati ${eur(e.amount)}` : ''}${e.undone ? ' · annullato' : ''}</small></div>
+        <small>${[ds ? (typeById(e.typeId)?.name || '—') : '', e.amount ? `incassati ${eur(e.amount)}` : '', e.undone ? 'annullato' : ''].filter(Boolean).map(esc).join(' · ')}</small></div>
       ${e.undone ? '' : `<button class="btn sm" data-act="undo" data-id="${e.id}">Annulla</button>`}
     </div>`).join('');
 
@@ -600,12 +601,12 @@ function renderSerata() {
       ${ds ? `<div class="stat hi"><b>${eur(revenue)}</b><span>Incasso alla porta</span></div>` : `<div class="stat"><b>${outN}</b><span>Usciti</span></div>`}
     </div></section>
 
-    <section class="card"><h3>Per tipo di biglietto</h3>
-      <table style="margin-top:8px"><thead><tr><th>Tipo</th>${ds ? '<th>Ingressi</th><th>Incassato</th>' : '<th>In lista</th><th>Entrati</th>'}</tr></thead><tbody>
-        ${perType.map(r => `<tr><td>${esc(r.t.name)}</td>${ds ? `<td>${r.n}</td><td>${eur(r.amount)}</td>` : `<td>${r.listed}</td><td>${r.n}</td>`}</tr>`).join('')}
+    ${ds ? `<section class="card"><h3>Per tipo di biglietto</h3>
+      <table style="margin-top:8px"><thead><tr><th>Tipo</th><th>Ingressi</th><th>Incassato</th></tr></thead><tbody>
+        ${perType.map(r => `<tr><td>${esc(r.t.name)}</td><td>${r.n}</td><td>${eur(r.amount)}</td></tr>`).join('')}
       </tbody></table>
-      ${ds ? '<p class="muted" style="font-size:13px;margin-top:10px">L’incasso conta solo quanto riscosso alla porta; le prevendite già pagate non sono incluse.</p>' : ''}
-    </section>
+      <p class="muted" style="font-size:13px;margin-top:10px">L’incasso conta solo quanto riscosso alla porta; le prevendite già pagate non sono incluse.</p>
+    </section>` : ''}
 
     <section class="card"><h3>Registro</h3><div class="log" style="margin-top:8px">${logRows || '<p class="muted" style="padding:8px 0">Ancora nessun movimento.</p>'}</div></section>
 
@@ -621,16 +622,16 @@ function renderSerata() {
       <p class="muted" style="font-size:13px">${ds ? 'Attiva: si può aggiungere e incassare chi arriva senza biglietto.' : 'Spenta: la lista è di soli paganti. Chi non risulta pagato non entra e alla porta non si incassa niente.'}</p>
     </section>
 
-    <section class="card"><h3>Tipi di biglietto</h3>
+    ${ds ? `<section class="card"><h3>Tipi di biglietto</h3>
       <div style="margin-top:6px">${db.types.map(t => `
-        <div class="type-row ${ds ? '' : 'simple'}">
+        <div class="type-row">
           <input type="text" data-type="${t.id}" data-field="name" value="${esc(t.name)}" aria-label="Nome tipo">
-          ${ds ? `<input type="number" inputmode="decimal" min="0" step="0.5" data-type="${t.id}" data-field="price" value="${t.price}" aria-label="Prezzo in euro">` : ''}
+          <input type="number" inputmode="decimal" min="0" step="0.5" data-type="${t.id}" data-field="price" value="${t.price}" aria-label="Prezzo in euro">
           <button class="btn sm danger" data-act="delType" data-id="${t.id}" aria-label="Elimina tipo">${icon('x')}</button>
-          ${ds ? `<label class="check"><input type="checkbox" data-type="${t.id}" data-field="prepaid" ${t.prepaid ? 'checked' : ''}>Già pagato in prevendita (non si incassa alla porta)</label>` : ''}
+          <label class="check"><input type="checkbox" data-type="${t.id}" data-field="prepaid" ${t.prepaid ? 'checked' : ''}>Già pagato in prevendita (non si incassa alla porta)</label>
         </div>`).join('')}</div>
       <button class="btn block" style="margin-top:8px" data-act="addType">${icon('plus')} Aggiungi tipo</button>
-    </section>
+    </section>` : ''}
 
     <section class="card stack"><h3>Dati</h3>
       <div class="cols"><button class="btn" data-act="exportGuests">Esporta ospiti (CSV)</button><button class="btn" data-act="exportLog">Esporta registro (CSV)</button></div>
@@ -850,7 +851,7 @@ function importRows(rows) {
     if (!name) { skipped++; continue; }
     const codeRaw = cell(r, col.code).toUpperCase();
     const typeName = cell(r, col.type);
-    const type = typeName ? db.types.find(t => norm(t.name) === norm(typeName)) : null;
+    const type = usesTypes() && typeName ? db.types.find(t => norm(t.name) === norm(typeName)) : null;
     const paidRaw = norm(cell(r, col.paid));
     const paid = paidRaw ? /^(si|s|y|yes|1|true|x|ok|pagato)$/.test(paidRaw) : undefined;
     const sizeN = parseInt(cell(r, col.size), 10);
@@ -966,22 +967,29 @@ const ACTIONS = {
   },
 
   csvTemplate() {
-    const first = db.types[0].name, last = db.types[db.types.length - 1].name;
+    const T = usesTypes(), first = db.types[0].name, last = db.types[db.types.length - 1].name;
+    const row = (name, size, type, paid, notes) => [name, size, ...(T ? [type] : []), paid, notes];
     download('modello-ospiti.csv', csvOut([
-      ['Nome', 'Persone', 'Tipo', 'Pagato', 'Note'],
-      ['Giulia Rossi', 2, first, 'sì', ''],
-      ['Marco Bianchi', 1, first, 'no', 'Bonifico in arrivo'],
-      ['Elena Ferrari', 1, last, 'sì', 'Organizzatrice'],
+      ['Nome', 'Persone', ...(T ? ['Tipo'] : []), 'Pagato', 'Note'],
+      row('Giulia Rossi', 2, first, 'sì', ''),
+      row('Marco Bianchi', 1, first, 'no', 'Bonifico in arrivo'),
+      row('Elena Ferrari', 1, last, 'sì', 'Organizzatrice'),
     ]), 'text/csv');
   },
-  exportGuests: () => download(`ospiti-${today()}.csv`, csvOut([
-    ['Codice', 'Nome', 'Persone', 'Tipo', 'Pagato', 'Dentro ora', 'Primo ingresso', 'Note'],
-    ...db.guests.slice().sort(byName).map(g => [g.code, g.name, g.size, typeOf(g).name, g.paid ? 'sì' : 'no', g.inside, g.arrivedAt ? hhmm(g.arrivedAt) : '', g.notes]),
-  ]), 'text/csv'),
-  exportLog: () => download(`registro-${today()}.csv`, csvOut([
-    ['Ora', 'Ospite', 'Tipo', 'Azione', 'Persone', 'Incassato (€)', 'Annullato'],
-    ...db.log.map(e => [hhmm(e.t), e.name, typeById(e.typeId)?.name || '', e.kind === 'in' ? 'Ingresso' : 'Uscita', e.n, e.amount || 0, e.undone ? 'sì' : '']),
-  ]), 'text/csv'),
+  exportGuests() {
+    const T = usesTypes();
+    download(`ospiti-${today()}.csv`, csvOut([
+      ['Codice', 'Nome', 'Persone', ...(T ? ['Tipo'] : []), 'Pagato', 'Dentro ora', 'Primo ingresso', 'Note'],
+      ...db.guests.slice().sort(byName).map(g => [g.code, g.name, g.size, ...(T ? [typeOf(g).name] : []), g.paid ? 'sì' : 'no', g.inside, g.arrivedAt ? hhmm(g.arrivedAt) : '', g.notes]),
+    ]), 'text/csv');
+  },
+  exportLog() {
+    const T = usesTypes();
+    download(`registro-${today()}.csv`, csvOut([
+      ['Ora', 'Ospite', ...(T ? ['Tipo'] : []), 'Azione', 'Persone', ...(T ? ['Incassato (€)'] : []), 'Annullato'],
+      ...db.log.map(e => [hhmm(e.t), e.name, ...(T ? [typeById(e.typeId)?.name || ''] : []), e.kind === 'in' ? 'Ingresso' : 'Uscita', e.n, ...(T ? [e.amount || 0] : []), e.undone ? 'sì' : '']),
+    ]), 'text/csv');
+  },
   backup: () => download(`guardiano-backup-${today()}.json`, JSON.stringify(db, null, 2), 'application/json'),
 
   resetNight() {
