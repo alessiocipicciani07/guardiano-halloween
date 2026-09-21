@@ -209,6 +209,7 @@ th:not(:first-child), td:not(:first-child) { text-align: right; }
 .tag-in { color: var(--ok); font-weight: 700; } .tag-out { color: var(--violet); font-weight: 700; }
 
 .type-row { display: grid; grid-template-columns: 1fr 88px auto; gap: 8px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.type-row.simple { grid-template-columns: 1fr auto; }
 .type-row:first-of-type { border-top: 0; }
 .type-row .check { grid-column: 1 / -1; min-height: 36px; font-weight: 500; font-size: 14px; color: var(--muted); }
 .type-row input[type=text], .type-row input[type=number] { min-height: 44px; }
