@@ -237,7 +237,7 @@ function showGuest(id) {
       <button class="btn big block ok" id="inBtn" data-act="doIn"></button>
     </div>`;
   } else {
-    door = `<div class="alert warn">Già entrat${g.size === 1 ? 'o/a' : 'i'}${g.arrivedAt ? ' alle ' + hhmm(g.arrivedAt) : ''} — ${persone(g.inside)} in sala.</div>`;
+    door = `<div class="alert warn">${g.size === 1 ? `Ingresso già registrato${g.arrivedAt ? ' alle ' + hhmm(g.arrivedAt) : ''}.` : `Già entrati${g.arrivedAt ? ' alle ' + hhmm(g.arrivedAt) : ''} — ${persone(g.inside)} in sala.`}</div>`;
   }
   const exits = g.inside > 0 ? `<div class="stack"><h3>Uscita</h3><div class="cols">
       <button class="btn" data-act="doOut" data-n="1">${g.inside > 1 ? 'Esce 1' : 'Segna uscita'}</button>
@@ -245,7 +245,7 @@ function showGuest(id) {
     </div></div>` : '';
   openSheet(`
     <div class="sheet-head"><h2>${esc(g.name)}</h2>${closeBtn()}</div>
-    <div class="meta"><span class="pill ${st}">${STATUS[st]}</span>${usesTypes() ? `<span class="tag">${esc(t.name)}</span>` : ''}<span class="tag">${persone(g.size)}</span><span class="tag code">${esc(g.code)}</span></div>
+    <div class="meta"><span class="pill ${st}">${STATUS[st]}</span>${usesTypes() ? `<span class="tag">${esc(t.name)}</span>` : ''}${g.size > 1 ? `<span class="tag">${persone(g.size)}</span>` : ''}<span class="tag code">${esc(g.code)}</span></div>
     ${g.notes ? `<div class="notebox">${esc(g.notes)}</div>` : ''}
     ${door}${exits}
     <div class="foot">
@@ -268,7 +268,7 @@ function syncGuest() {
   const btn = $('#inBtn', sheet);
   btn.className = 'btn big block ' + (over ? 'warn' : 'ok');
   const verb = statusOf(g) === 'out' ? 'rientrare' : 'entrare';
-  btn.textContent = `${due > 0 ? `Incassa ${eur(due)} e f` : 'F'}ai ${verb} ${n}${over ? ' comunque' : ''}`;
+  btn.textContent = `${due > 0 ? `Incassa ${eur(due)} e f` : 'F'}ai ${verb}${g.size > 1 ? ' ' + n : ''}${over ? ' comunque' : ''}`;
 }
 
 /* ---------- aggiunta / modifica ospite ---------- */
@@ -278,8 +278,7 @@ function showEdit(id) {
   openSheet(`
     <div class="sheet-head"><h2>${g ? 'Modifica ospite' : 'Nuovo ospite'}</h2>${closeBtn()}</div>
     <form id="guestForm" class="stack" autocomplete="off">
-      <label class="field"><span>Nome</span><input type="text" name="name" required value="${esc(g?.name)}" autocapitalize="words" placeholder="Es. Giulia Rossi"></label>
-      <div class="stack"><div class="label">Numero di persone</div>${stepper('size', g?.size ?? 1, Math.max(1, g?.inside ?? 1), 30)}</div>
+      <label class="field"><span>Nome e cognome</span><input type="text" name="name" required value="${esc(g?.name)}" autocapitalize="words" placeholder="Es. Giulia Rossi"></label>
       ${usesTypes() ? `<label class="field"><span>Tipo di biglietto</span><select name="typeId">${typeOptions(g?.typeId ?? t0?.id)}</select></label>` : ''}
       <label class="check"><input type="checkbox" name="paid" ${(g ? g.paid : (usesTypes() ? isPrepaid(t0) : true)) ? 'checked' : ''}>Pagamento ricevuto</label>
       <label class="field"><span>Note (visibili alla porta)</span><textarea name="notes" placeholder="Es. organizzatore, allergie…">${esc(g?.notes)}</textarea></label>
@@ -298,7 +297,7 @@ function showEdit(id) {
 
 function submitGuest(form) {
   const f = new FormData(form);
-  const data = { name: f.get('name'), size: stepVal('size'), typeId: f.get('typeId') || (sheetCtx.gid ? byId(sheetCtx.gid).typeId : db.types[0].id), paid: f.get('paid') === 'on', notes: f.get('notes') };
+  const data = { name: f.get('name'), size: sheetCtx.gid ? byId(sheetCtx.gid).size : 1, typeId: f.get('typeId') || (sheetCtx.gid ? byId(sheetCtx.gid).typeId : db.types[0].id), paid: f.get('paid') === 'on', notes: f.get('notes') };
   if (!String(data.name).trim()) return;
   if (sheetCtx.gid) {
     Object.assign(byId(sheetCtx.gid), { ...data, name: data.name.trim(), notes: data.notes.trim() });
@@ -317,16 +316,15 @@ function showWalkIn(name = '') {
   openSheet(`
     <div class="sheet-head"><h2>Nuovo alla porta</h2>${closeBtn()}</div>
     <form id="walkForm" class="stack" autocomplete="off">
-      <label class="field"><span>Nome (facoltativo)</span><input type="text" name="name" value="${esc(name)}" autocapitalize="words" placeholder="Es. Marco"></label>
+      <label class="field"><span>Nome e cognome (facoltativo)</span><input type="text" name="name" value="${esc(name)}" autocapitalize="words" placeholder="Es. Marco"></label>
       <label class="field"><span>Biglietto</span><select name="typeId">${typeOptions(def.id)}</select></label>
-      <div class="stack"><div class="label" style="text-align:center">Quante persone?</div>${stepper('size', 1, 1, 30)}</div>
       <div class="alert warn" id="capWarn" hidden></div>
       <button class="btn big block ok" id="walkBtn" type="submit"></button>
     </form>`, { onStep: syncWalk, mount: syncWalk });
 }
 
 function syncWalk() {
-  const n = stepVal('size');
+  const n = 1;
   const t = typeById($('[name=typeId]', sheet).value);
   const total = t.price * n, over = overCapacity(n);
   const warn = $('#capWarn', sheet);
@@ -334,18 +332,18 @@ function syncWalk() {
   warn.textContent = `Si supera la capienza (${insideTotal() + n} su ${capacity()}).`;
   const btn = $('#walkBtn', sheet);
   btn.className = 'btn big block ' + (over ? 'warn' : 'ok');
-  btn.textContent = `${total > 0 ? `Incassa ${eur(total)} e f` : 'F'}ai entrare ${n}${over ? ' comunque' : ''}`;
+  btn.textContent = `${total > 0 ? `Incassa ${eur(total)} e f` : 'F'}ai entrare${over ? ' comunque' : ''}`;
 }
 
 function submitWalkIn(form) {
   const f = new FormData(form);
-  const n = stepVal('size'), t = typeById(f.get('typeId'));
+  const n = 1, t = typeById(f.get('typeId'));
   if (overCapacity(n) && !confirm(`Capienza di ${capacity()} superata. Far entrare comunque?`)) return;
   const count = db.guests.filter(g => g.walkin).length + 1;
   const g = addGuest({ name: String(f.get('name')).trim() || `Ospite cassa ${count}`, size: n, typeId: t.id, paid: t.price === 0, walkin: true });
   const e = checkIn(g.id, n);
   beep('ok'); closeSheet(); refresh();
-  toast(`${g.name} · ingresso di ${persone(n)}${e.amount ? ` · incassati ${eur(e.amount)}` : ''}`, { undo: e.id });
+  toast(`${g.name} · ingresso registrato${e.amount ? ` · incassati ${eur(e.amount)}` : ''}`, { undo: e.id });
 }
 
 /* ---------- biglietto con QR ---------- */
@@ -395,7 +393,7 @@ function ticketCanvas(g) {
   x.fillStyle = '#fff'; fitText(x, g.name, W - 160, 76, 800, SANS);
   x.fillText(g.name, W / 2, 480);
   x.fillStyle = '#a498b4'; x.font = `600 34px ${SANS}`;
-  x.fillText(usesTypes() ? `${persone(g.size)} · ${typeOf(g).name}` : persone(g.size), W / 2, 540);
+  x.fillText([g.size > 1 ? persone(g.size) : 'Ingresso personale', usesTypes() ? typeOf(g).name : ''].filter(Boolean).join(' · '), W / 2, 540);
 
   x.fillStyle = '#fff'; roundRect(x, 150, 590, 600, 600, 36); x.fill();
   QR.draw(x, g.code, 170, 610, 560, { dark: '#0d0a12', light: '#ffffff', margin: 2 });
@@ -431,7 +429,7 @@ function printTickets(list) {
   $('#print').innerHTML = list.map(g => `<div class="pt">
     <div class="pt-head">${esc(db.event.name)}</div><div class="pt-date">${esc(dateStr)}</div>
     <img alt="" src="${QR.dataURL(g.code, 6, { margin: 2 })}">
-    <div class="pt-nm">${esc(g.name)}</div><div class="pt-sub">${persone(g.size)}${usesTypes() ? ` · ${esc(typeOf(g).name)}` : ''}</div>
+    <div class="pt-nm">${esc(g.name)}</div><div class="pt-sub">${esc([g.size > 1 ? persone(g.size) : 'Ingresso personale', usesTypes() ? typeOf(g).name : ''].filter(Boolean).join(' · '))}</div>
     <div class="pt-code">${esc(g.code)}</div></div>`).join('');
   window.print();
 }
@@ -468,10 +466,16 @@ const storageBanner = () => (storageOk ? '' : `<div class="alert bad">Il browser
 
 function guestRow(g) {
   const st = statusOf(g), due = dueOf(g);
+  const sub = [
+    usesTypes() ? esc(typeOf(g).name) : '',
+    g.size > 1 ? persone(g.size) : '',
+    st === 'part' ? `dentro ${g.inside}` : '',
+    due ? `<span class="due">da pagare ${eur(due)}</span>` : (!g.paid && !doorSales() ? '<span class="due">non pagato</span>' : ''),
+  ].filter(Boolean).join(' · ');
   return `<button class="row" data-act="openGuest" data-id="${g.id}">
     <div class="row-main">
       <div class="nm">${esc(g.name)}</div>
-      <div class="sub">${usesTypes() ? `${esc(typeOf(g).name)} · ` : ''}${persone(g.size)}${st === 'part' ? ` · dentro ${g.inside}` : ''}${due ? ` · <span class="due">da pagare ${eur(due)}</span>` : (!g.paid && !doorSales() ? ' · <span class="due">non pagato</span>' : '')}</div>
+      ${sub ? `<div class="sub">${sub}</div>` : ''}
       ${g.notes ? `<div class="note">${esc(g.notes)}</div>` : ''}
     </div>
     <span class="pill ${st}">${STATUS[st]}</span></button>`;
@@ -567,11 +571,11 @@ function updateOspiti() {
     : `<div class="empty"><p>${G.length ? 'Nessun ospite corrisponde ai filtri.' : 'Ancora nessun ospite in lista.'}</p></div>`;
 
   $('#listTools').innerHTML = `
-    <h3>Lista · ${G.length} nominativi, ${persone(sum(G, g => g.size))}</h3>
+    <h3>Lista · ${G.length === sum(G, g => g.size) ? persone(G.length) : `${G.length} nominativi, ${persone(sum(G, g => g.size))}`}</h3>
     <div class="cols"><button class="btn" data-act="importCsv">Importa CSV</button><button class="btn" data-act="csvTemplate">Scarica modello</button></div>
     <button class="btn block" data-act="printAll">Stampa tutti i biglietti QR</button>
     ${G.length ? '' : '<button class="btn block ghost" data-act="demo">Carica ospiti di prova</button>'}
-    <p class="muted" style="font-size:14px">Colonne del CSV: Nome, Persone, ${usesTypes() ? 'Tipo, ' : ''}Pagato, Note, Codice; basta Nome. Puoi reimportare il file quando cambia: chi c’è già viene aggiornato (riconosciuto dal codice o dal nome), non duplicato.</p>`;
+    <p class="muted" style="font-size:14px">Colonne del CSV: Nome, ${usesTypes() ? 'Tipo, ' : ''}Pagato, Note, Codice; basta Nome. Puoi reimportare il file quando cambia: chi c’è già viene aggiornato (riconosciuto dal codice o dal nome), non duplicato.</p>`;
 }
 
 /* ---------- Serata ---------- */
@@ -767,16 +771,16 @@ function onScanned(raw, { force = false } = {}) {
   const open = { act: 'scanOpen', label: 'Apri scheda', id: g.id };
   if (rem <= 0) {
     beep('warn');
-    return showScanResult('warn', 'Già entrato', `${g.name} · ${persone(g.inside)} in sala${g.arrivedAt ? ' dalle ' + hhmm(g.arrivedAt) : ''}`, { note: g.notes, buttons: [open, cont] });
+    return showScanResult('warn', 'Già entrato', g.size > 1 ? `${g.name} · ${persone(g.inside)} in sala${g.arrivedAt ? ' dalle ' + hhmm(g.arrivedAt) : ''}` : `${g.name}${g.arrivedAt ? ' · ingresso alle ' + hhmm(g.arrivedAt) : ''}`, { note: g.notes, buttons: [open, cont] });
   }
   if (unpaidBlock(g)) {
     beep('bad');
-    return showScanResult('bad', 'Non risulta pagato', `${g.name} · ${persone(g.size)}`, { note: g.notes, buttons: [open, cont] });
+    return showScanResult('bad', 'Non risulta pagato', `${g.name}${g.size > 1 ? ' · ' + persone(g.size) : ''}`, { note: g.notes, buttons: [open, cont] });
   }
   if (db.event.autoScan && dueOf(g) === 0 && !overCapacity(rem)) {
     const e = checkIn(g.id, rem);
     beep('ok'); refresh();
-    return showScanResult('ok', g.name, `Ingresso registrato · ${persone(rem)}`, { note: g.notes, auto: 2600, buttons: [{ act: 'scanUndo', label: 'Annulla', id: e.id }] });
+    return showScanResult('ok', g.name, `Ingresso registrato${g.size > 1 ? ` · ${persone(rem)}` : ''}`, { note: g.notes, auto: 2600, buttons: [{ act: 'scanUndo', label: 'Annulla', id: e.id }] });
   }
   beep('warn');
   closeScan();
@@ -845,7 +849,7 @@ function importRows(rows) {
   const byName = new Map();
   for (const g of db.guests) if (!g.walkin) byName.set(norm(g.name), [...(byName.get(norm(g.name)) || []), g]);
   const touched = new Set();
-  let added = 0, updated = 0, people = 0, skipped = 0;
+  let added = 0, updated = 0, multi = 0, skipped = 0;
   for (const r of data) {
     const name = [cell(r, col.name), cell(r, col.surname)].filter(Boolean).join(' ');
     if (!name) { skipped++; continue; }
@@ -854,36 +858,34 @@ function importRows(rows) {
     const type = usesTypes() && typeName ? db.types.find(t => norm(t.name) === norm(typeName)) : null;
     const paidRaw = norm(cell(r, col.paid));
     const paid = paidRaw ? /^(si|s|y|yes|1|true|x|ok|pagato)$/.test(paidRaw) : undefined;
-    const sizeN = parseInt(cell(r, col.size), 10);
+    if (parseInt(cell(r, col.size), 10) > 1) multi++; // ogni riga vale una persona
     const notes = cell(r, col.notes);
     let g = (codeRaw && byCode.get(codeRaw)) || (byName.get(norm(name)) || []).find(x => !touched.has(x.id));
     if (g && touched.has(g.id)) g = null; // stesso codice ripetuto nel file
     if (g) {
       g.name = name;
-      if (sizeN > 0) g.size = clamp(sizeN, Math.max(1, g.inside), 30);
       if (type) g.typeId = type.id;
       if (paid !== undefined) g.paid = paid;
       if (notes) g.notes = notes;
       updated++;
     } else {
-      g = addGuest({ name, size: sizeN || 1, typeId: (type || defType).id, code: codeRaw && !byCode.has(codeRaw) ? codeRaw : '', paid, notes });
+      g = addGuest({ name, size: 1, typeId: (type || defType).id, code: codeRaw && !byCode.has(codeRaw) ? codeRaw : '', paid, notes });
       byCode.set(g.code, g);
       added++;
     }
     touched.add(g.id);
-    people += g.size;
   }
   save(); refresh();
-  toast(`${added} nuovi, ${updated} aggiornati (${persone(people)} nel file)${skipped ? ` · ${skipped} righe senza nome ignorate` : ''}`);
+  toast(`${added} nuovi, ${updated} aggiornati${skipped ? ` · ${skipped} righe senza nome ignorate` : ''}${multi ? ` · ${multi} righe con «Persone» oltre 1: ogni riga vale una persona` : ''}`);
 }
 
 const DEMO = [
-  ['Giulia Rossi', 2, 0], ['Marco Bianchi', 1, 0], ['Sara Conti', 4, 0, 'Vicino al DJ'], ['Luca Moretti', 1, 0],
-  ['Elena Ferrari', 2, 1, 'Organizzatrice'], ['Davide Greco', 1, 0, 'Bonifico non ancora arrivato', false], ['Chiara Romano', 3, 0], ['Matteo Colombo', 2, 0],
-  ['Francesca Ricci', 1, 0, 'Allergia ai latticini'], ['Andrea Marino', 2, 0], ['Valentina Gallo', 1, 1, 'Fotografa'], ['Simone Costa', 5, 0, 'Compleanno: torta alle 23:30'],
+  ['Giulia Rossi', 1], ['Marco Bianchi', 1], ['Sara Conti', 1, 'Vicino al DJ'], ['Luca Moretti', 1],
+  ['Elena Ferrari', 1, 'Organizzatrice'], ['Davide Greco', 1, 'Bonifico non ancora arrivato', false], ['Chiara Romano', 1], ['Matteo Colombo', 1],
+  ['Francesca Ricci', 1, 'Allergia ai latticini'], ['Andrea Marino', 1], ['Valentina Gallo', 1, 'Fotografa'], ['Simone Costa', 1, 'Compleanno: torta alle 23:30'],
 ];
 function loadDemo() {
-  DEMO.forEach(([name, size, ti, notes, paid]) => addGuest({ name, size, typeId: db.types[Math.min(ti, db.types.length - 1)].id, notes, paid }));
+  DEMO.forEach(([name, size, notes, paid]) => addGuest({ name, size, notes, paid }));
   save(); refresh();
   toast('Ospiti di prova aggiunti. Ricordati di “Azzerare la serata” prima dell’evento.');
 }
@@ -917,13 +919,13 @@ const ACTIONS = {
     if (overCapacity(n) && !confirm(`Capienza di ${capacity()} superata. Far entrare comunque?`)) return;
     const e = checkIn(g.id, n);
     beep('ok'); closeSheet(); refresh();
-    toast(`${g.name} · ingresso di ${persone(n)}${e.amount ? ` · incassati ${eur(e.amount)}` : ''}`, { undo: e.id });
+    toast(`${g.name} · ${g.size > 1 ? `ingresso di ${persone(n)}` : 'ingresso registrato'}${e.amount ? ` · incassati ${eur(e.amount)}` : ''}`, { undo: e.id });
   },
   doOut(el) {
     const g = byId(sheetCtx.gid);
     const e = checkOut(g.id, Number(el.dataset.n));
     closeSheet(); refresh();
-    toast(`${g.name} · uscita di ${persone(e.n)}`, { undo: e.id });
+    toast(`${g.name} · ${g.size > 1 ? `uscita di ${persone(e.n)}` : 'uscita registrata'}`, { undo: e.id });
   },
   undo(el) {
     if (undoEntry(el.dataset.id)) { refresh(); toast('Operazione annullata.'); }
@@ -968,26 +970,26 @@ const ACTIONS = {
 
   csvTemplate() {
     const T = usesTypes(), first = db.types[0].name, last = db.types[db.types.length - 1].name;
-    const row = (name, size, type, paid, notes) => [name, size, ...(T ? [type] : []), paid, notes];
+    const row = (name, type, paid, notes) => [name, ...(T ? [type] : []), paid, notes];
     download('modello-ospiti.csv', csvOut([
-      ['Nome', 'Persone', ...(T ? ['Tipo'] : []), 'Pagato', 'Note'],
-      row('Giulia Rossi', 2, first, 'sì', ''),
-      row('Marco Bianchi', 1, first, 'no', 'Bonifico in arrivo'),
-      row('Elena Ferrari', 1, last, 'sì', 'Organizzatrice'),
+      ['Nome', ...(T ? ['Tipo'] : []), 'Pagato', 'Note'],
+      row('Giulia Rossi', first, 'sì', ''),
+      row('Marco Bianchi', first, 'no', 'Bonifico in arrivo'),
+      row('Elena Ferrari', last, 'sì', 'Organizzatrice'),
     ]), 'text/csv');
   },
   exportGuests() {
-    const T = usesTypes();
+    const T = usesTypes(), P = db.guests.some(g => g.size > 1);
     download(`ospiti-${today()}.csv`, csvOut([
-      ['Codice', 'Nome', 'Persone', ...(T ? ['Tipo'] : []), 'Pagato', 'Dentro ora', 'Primo ingresso', 'Note'],
-      ...db.guests.slice().sort(byName).map(g => [g.code, g.name, g.size, ...(T ? [typeOf(g).name] : []), g.paid ? 'sì' : 'no', g.inside, g.arrivedAt ? hhmm(g.arrivedAt) : '', g.notes]),
+      ['Codice', 'Nome', ...(P ? ['Persone'] : []), ...(T ? ['Tipo'] : []), 'Pagato', 'Dentro ora', 'Primo ingresso', 'Note'],
+      ...db.guests.slice().sort(byName).map(g => [g.code, g.name, ...(P ? [g.size] : []), ...(T ? [typeOf(g).name] : []), g.paid ? 'sì' : 'no', g.inside, g.arrivedAt ? hhmm(g.arrivedAt) : '', g.notes]),
     ]), 'text/csv');
   },
   exportLog() {
-    const T = usesTypes();
+    const T = usesTypes(), P = db.guests.some(g => g.size > 1);
     download(`registro-${today()}.csv`, csvOut([
-      ['Ora', 'Ospite', ...(T ? ['Tipo'] : []), 'Azione', 'Persone', ...(T ? ['Incassato (€)'] : []), 'Annullato'],
-      ...db.log.map(e => [hhmm(e.t), e.name, ...(T ? [typeById(e.typeId)?.name || ''] : []), e.kind === 'in' ? 'Ingresso' : 'Uscita', e.n, ...(T ? [e.amount || 0] : []), e.undone ? 'sì' : '']),
+      ['Ora', 'Ospite', ...(T ? ['Tipo'] : []), 'Azione', ...(P ? ['Persone'] : []), ...(T ? ['Incassato (€)'] : []), 'Annullato'],
+      ...db.log.map(e => [hhmm(e.t), e.name, ...(T ? [typeById(e.typeId)?.name || ''] : []), e.kind === 'in' ? 'Ingresso' : 'Uscita', ...(P ? [e.n] : []), ...(T ? [e.amount || 0] : []), e.undone ? 'sì' : '']),
     ]), 'text/csv');
   },
   backup: () => download(`guardiano-backup-${today()}.json`, JSON.stringify(db, null, 2), 'application/json'),
