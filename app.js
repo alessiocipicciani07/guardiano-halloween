@@ -27,6 +27,63 @@ const icon = name => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="cu
 
 /* ================= dati ================= */
 const KEY = 'guardiano.v1';
+
+/* Organizzazione: spese, incassi e cose da avere. Importo vuoto (null) = costo ancora sconosciuto, non entra nei totali. */
+function orgDefaults() {
+  const e = (name, amount, o = {}) => ({ id: uid(), name, amount, perHead: false, paid: false, buffer: true, note: '', ...o });
+  const t = (group, name, qty = '', who = '') => ({ id: uid(), group, name, qty, who, done: false });
+  const BEV = 'Bevande (stima per 120 persone)';
+  return {
+    price: 20, expected: 120, buffer: 10, free: 0,
+    expenses: [
+      e('Affitto sala Corvia', 120, { note: 'a voce, da confermare' }),
+      e('DJ Mario · anticipo 30%', 90, { note: 'audio e luci inclusi; chiedere se è rimborsabile' }),
+      e('DJ Mario · saldo', 210),
+      e('Steward (2)', 260, { note: 'in attesa del preventivo' }),
+      e('Barman (2)', 160),
+      e('SIAE', 186.54, { buffer: false, note: 'preventivo per 200 persone, 22:00–03:00' }),
+      e('Alcolici, mixer, ghiaccio e bicchieri', 4.88, { perHead: true, note: 'stima per persona' }),
+      e('SCF (diritti connessi)', null, { note: 'verificare se è già nel preventivo SIAE' }),
+      e('Braccialetti o timbri', null),
+      e('Acqua e bibite analcoliche', null),
+      e('Pulizie e smaltimento rifiuti', null, { note: 'chiedere se sono incluse nell’affitto' }),
+      e('Allestimento e decorazioni Halloween', null),
+      e('Assicurazione RC evento', null),
+      e('Antincendio e primo soccorso', null),
+      e('Bolli e diritti SUAPE / Comune', null),
+      e('Relazione tecnico, agibilità e capienza', null),
+      e('Cauzione sala', null, { note: 'chiedere a Corvia' }),
+      e('Luce, riscaldamento e utenze', null, { note: 'chiedere se incluse nei 120 €' }),
+      e('Attrezzatura bar (frigo, ghiaccio extra)', null),
+      e('Commissioni sui pagamenti', null),
+      e('Promozione e stampe', null),
+      e('Macchina del fumo ed effetti', null),
+      e('Barman/steward extra oltre 150 persone', null),
+    ],
+    incomes: [],
+    todo: [
+      t(BEV, 'Gin', '7 bottiglie'), t(BEV, 'Vodka', '10 bottiglie'), t(BEV, 'Aperol', '9 bottiglie'),
+      t(BEV, 'Prosecco', '13 bottiglie'), t(BEV, 'Acqua tonica 18 cl', '117'), t(BEV, 'Red Bull', '42 lattine'),
+      t(BEV, 'Ingredienti per shot, negroni e drink a tema'), t(BEV, 'Ghiaccio'), t(BEV, 'Limoni, arance e menta'),
+      t(BEV, 'Acqua e bibite analcoliche'),
+      t('Bar', 'Banco o tavolo del bar'), t('Bar', 'Frigoriferi o ghiacciaie'), t('Bar', 'Bicchieri'),
+      t('Bar', 'Cannucce e tovaglioli'), t('Bar', 'Shaker, jigger e cucchiaini'), t('Bar', 'Secchielli per il ghiaccio'),
+      t('Bar', 'Coltelli e taglieri'), t('Bar', 'Sacchi della spazzatura'),
+      t('Sala', 'Luci', '', 'Mario'), t('Sala', 'Impianto audio', '', 'Mario'), t('Sala', 'Tavolini alti'),
+      t('Sala', 'Decorazioni Halloween'), t('Sala', 'Macchina del fumo o effetti'), t('Sala', 'Prolunghe e ciabatte'),
+      t('Sala', 'Guardaroba o appendiabiti'), t('Sala', 'Cestini per i rifiuti'),
+      t('Ingresso', 'Tavolo per l’ingresso'), t('Ingresso', 'Telefono carico con l’app + power bank'),
+      t('Ingresso', 'Cavo di ricarica'), t('Ingresso', 'Lista stampata di riserva e penna'),
+      t('Ingresso', 'Braccialetti o timbro'), t('Ingresso', 'Cartello 18+ e regole d’ingresso'), t('Ingresso', 'Torcia'),
+      t('Sicurezza', 'Estintori e uscite di sicurezza', '', 'chiedere alla sala'), t('Sicurezza', 'Cassetta del primo soccorso'),
+      t('Sicurezza', 'Steward confermati (2)', '', 'Marco'),
+      t('Documenti', 'Permesso SIAE pagato e stampato'), t('Documenti', 'Accordo scritto con la sala (orari, capienza, cauzione)'),
+      t('Documenti', 'Accordo con Mario (anticipo e orari)'), t('Documenti', 'Preventivo o ricevuta degli steward'),
+      t('Documenti', 'Eventuali comunicazioni al Comune/SUAPE'),
+    ],
+  };
+}
+
 const DEFAULTS = () => ({
   v: 1,
   event: { name: 'Halloween 2026', date: '2026-10-31', capacity: 0, autoScan: true, sound: true, doorSales: false },
@@ -36,6 +93,7 @@ const DEFAULTS = () => ({
   ],
   guests: [],
   log: [],
+  org: orgDefaults(),
 });
 
 let storageOk = true;
@@ -53,12 +111,21 @@ function load() {
 }
 function hydrate(d) {
   const base = DEFAULTS();
+  const o = d.org || {}, bo = base.org;
+  const n = (v, f) => (v !== '' && v != null && Number.isFinite(+v) ? +v : f);
   return {
     ...base, ...d,
     event: { ...base.event, ...d.event },
     types: Array.isArray(d.types) && d.types.length ? d.types : base.types,
     guests: Array.isArray(d.guests) ? d.guests : [],
     log: Array.isArray(d.log) ? d.log : [],
+    // dati salvati prima di questa sezione: si parte dall'elenco predefinito
+    org: {
+      price: n(o.price, bo.price), expected: n(o.expected, bo.expected), buffer: n(o.buffer, bo.buffer), free: n(o.free, bo.free),
+      expenses: Array.isArray(o.expenses) ? o.expenses : bo.expenses,
+      incomes: Array.isArray(o.incomes) ? o.incomes : bo.incomes,
+      todo: Array.isArray(o.todo) ? o.todo : bo.todo,
+    },
   };
 }
 let db = load();
@@ -436,7 +503,7 @@ function printTickets(list) {
 window.addEventListener('afterprint', () => { $('#print').innerHTML = ''; });
 
 /* ================= viste ================= */
-const ui = { tab: 'porta', q: '', gq: '', filter: 'all' };
+const ui = { tab: 'porta', q: '', gq: '', filter: 'all', org: 'spese', hideDone: false };
 
 function setTab(t) {
   ui.tab = t;
@@ -446,12 +513,13 @@ function setTab(t) {
 function render() {
   $$('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
   updateTop();
-  ({ porta: renderPorta, ospiti: renderOspiti, serata: renderSerata })[ui.tab]();
+  ({ porta: renderPorta, ospiti: renderOspiti, serata: renderSerata, organizza: renderOrganizza })[ui.tab]();
 }
 function refresh() {
   updateTop();
   if (ui.tab === 'porta') updatePorta();
   else if (ui.tab === 'ospiti') updateOspiti();
+  else if (ui.tab === 'organizza') updateOrgDerived();
   else renderSerata();
 }
 function updateTop() {
@@ -644,6 +712,205 @@ function renderSerata() {
       <button class="btn danger block" data-act="resetNight">Azzera la serata (dopo le prove)</button>
       <button class="btn danger block" data-act="wipe">Cancella tutto</button>
     </section>`;
+}
+
+/* ---------- Organizza: spese, incassi, cose da avere ---------- */
+const eurS = n => (n < 0 ? '−' : '') + eur(Math.abs(n));
+const orgNum = v => { if (v === '' || v == null) return null; const n = +String(v).replace(',', '.'); return Number.isFinite(n) ? n : null; };
+const expCost = x => (x.amount == null ? 0 : x.amount * (x.perHead ? db.org.expected : 1));
+
+function orgTotals() {
+  const o = db.org, pct = o.buffer / 100;
+  const known = o.expenses.filter(x => x.amount != null);
+  const mult = x => (x.buffer ? 1 + pct : 1);
+  const base = sum(known, expCost);
+  const extra = sum(known.filter(x => x.buffer), expCost) * pct;
+  const fixed = sum(known.filter(x => !x.perHead), x => x.amount * mult(x)); // costi che non dipendono dal numero di persone
+  const head = sum(known.filter(x => x.perHead), x => x.amount * mult(x));   // costo a persona (imprevisti compresi)
+  const unit = o.price - head;
+  const people = sum(db.guests.filter(g => g.paid), g => g.size);
+  const payers = Math.max(0, people - o.free);
+  const tickets = payers * o.price;
+  const door = sum(liveLog(), e => e.amount || 0);
+  const manual = sum(o.incomes, x => x.amount || 0);
+  const planned = base + extra;
+  return {
+    base, extra, planned, missing: o.expenses.filter(x => x.amount == null).length,
+    paidOut: sum(known.filter(x => x.paid), expCost),
+    people, payers, tickets, door, manual, income: tickets + door + manual,
+    breakEven: unit > 0 ? Math.ceil(fixed / unit - 1e-9) : null,
+    forecast: o.expected * o.price + manual - planned,
+  };
+}
+
+function orgSummaryHTML() {
+  const t = orgTotals(), o = db.org;
+  return `<div class="stats">
+      <div class="stat"><b>${eur(t.planned)}</b><span>Spese previste</span></div>
+      <div class="stat"><b>${eur(t.paidOut)}</b><span>Già pagate</span></div>
+      <div class="stat"><b>${eur(t.income)}</b><span>Incassato finora</span></div>
+      <div class="stat hi"><b class="${t.forecast < 0 ? 'neg' : ''}">${eurS(t.forecast)}</b><span>Margine a ${o.expected} paganti</span></div>
+    </div>
+    <p class="muted org-hint">${t.breakEven != null ? `Pareggio a ${eur(o.price)}: <b>${t.breakEven} paganti</b>` : 'Il prezzo non copre il costo a persona.'}${t.missing ? ` · ${t.missing} voci senza prezzo non sono nel totale` : ''}</p>`;
+}
+const spTotHTML = () => {
+  const t = orgTotals();
+  return `<div class="tot"><span>Subtotale</span><b>${eur(t.base)}</b></div>
+    <div class="tot"><span>Imprevisti ${db.org.buffer}%</span><b>${eur(t.extra)}</b></div>
+    <div class="tot big"><span>Totale previsto</span><b>${eur(t.planned)}</b></div>`;
+};
+const incTicketsHTML = () => {
+  const t = orgTotals(), o = db.org;
+  return `<div class="tot"><span>${persone(t.people)} segnate come pagate in Ospiti</span><b></b></div>
+    <div class="tot"><span>${t.payers} paganti × ${eur(o.price)}</span><b>${eur(t.tickets)}</b></div>
+    ${doorSales() ? `<div class="tot"><span>Incassi alla porta</span><b>${eur(t.door)}</b></div>` : ''}`;
+};
+const subHTML = x => (x.perHead && x.amount != null ? `${eur(x.amount)} × ${db.org.expected} persone = <b>${eur(expCost(x))}</b>` : '');
+
+function updateOrgDerived() {
+  const set = (sel, html) => { const el = $(sel); if (el) el.innerHTML = html; };
+  set('#orgSummary', orgSummaryHTML());
+  set('#spTot', spTotHTML());
+  set('#incTickets', incTicketsHTML());
+  set('#incTot', eur(orgTotals().income));
+  $$('.org-sub').forEach(el => { const x = db.org.expenses.find(e => e.id === el.dataset.sub); if (x) el.innerHTML = subHTML(x); });
+}
+
+const orgInput = (list, id, f, attrs = '') => `data-org="${list}" data-id="${id}" data-f="${f}" ${attrs}`;
+function expenseRow(x) {
+  return `<div class="org-row ${x.amount == null ? 'blank' : ''} ${x.paid ? 'done' : ''}">
+    <input type="text" ${orgInput('expenses', x.id, 'name')} value="${esc(x.name)}" placeholder="Voce di spesa" aria-label="Voce di spesa">
+    <div class="org-line">
+      <label class="amt"><input type="number" inputmode="decimal" step="0.01" min="0" placeholder="vuoto" ${orgInput('expenses', x.id, 'amount')} value="${x.amount ?? ''}" aria-label="Importo in euro"><span>€${x.perHead ? ' a pers.' : ''}</span></label>
+      <label class="check mini"><input type="checkbox" ${orgInput('expenses', x.id, 'perHead')} ${x.perHead ? 'checked' : ''}>a persona</label>
+      <label class="check mini"><input type="checkbox" ${orgInput('expenses', x.id, 'paid')} ${x.paid ? 'checked' : ''}>pagata</label>
+      <button class="btn sm danger" data-act="orgDel" data-list="expenses" data-id="${x.id}" aria-label="Elimina voce">${icon('x')}</button>
+    </div>
+    <input type="text" class="org-note" ${orgInput('expenses', x.id, 'note')} value="${esc(x.note)}" placeholder="Nota (facoltativa)" aria-label="Nota">
+    <div class="org-sub" data-sub="${x.id}">${subHTML(x)}</div>
+  </div>`;
+}
+function incomeRow(x) {
+  return `<div class="org-row">
+    <input type="text" ${orgInput('incomes', x.id, 'name')} value="${esc(x.name)}" placeholder="Es. Caparre, sconto ragazze…" aria-label="Voce di incasso">
+    <div class="org-line">
+      <label class="amt"><input type="number" inputmode="decimal" step="0.01" placeholder="0" ${orgInput('incomes', x.id, 'amount')} value="${x.amount ?? ''}" aria-label="Importo in euro"><span>€</span></label>
+      <button class="btn sm danger" data-act="orgDel" data-list="incomes" data-id="${x.id}" aria-label="Elimina voce">${icon('x')}</button>
+    </div>
+    <input type="text" class="org-note" ${orgInput('incomes', x.id, 'note')} value="${esc(x.note)}" placeholder="Nota (facoltativa)" aria-label="Nota">
+  </div>`;
+}
+function todoRow(x) {
+  return `<div class="todo-row ${x.done ? 'done' : ''}">
+    <input class="tick" type="checkbox" ${orgInput('todo', x.id, 'done')} ${x.done ? 'checked' : ''} aria-label="Preso">
+    <div class="todo-main">
+      <input type="text" ${orgInput('todo', x.id, 'name')} value="${esc(x.name)}" placeholder="Cosa serve" aria-label="Cosa serve">
+      <div class="todo-meta">
+        <input type="text" ${orgInput('todo', x.id, 'qty')} value="${esc(x.qty)}" placeholder="Quantità" aria-label="Quantità">
+        <input type="text" ${orgInput('todo', x.id, 'who')} value="${esc(x.who)}" placeholder="Chi se ne occupa" aria-label="Chi se ne occupa">
+      </div>
+    </div>
+    <button class="btn sm danger" data-act="orgDel" data-list="todo" data-id="${x.id}" aria-label="Elimina voce">${icon('x')}</button>
+  </div>`;
+}
+
+function spesePanel() {
+  const o = db.org;
+  const priced = o.expenses.filter(x => x.amount != null), blank = o.expenses.filter(x => x.amount == null);
+  return `
+    <section class="card"><h3>Con prezzo · ${priced.length}</h3>
+      <div class="org-list">${priced.map(expenseRow).join('') || '<p class="muted">Nessuna voce con prezzo.</p>'}</div>
+      <div id="spTot">${spTotHTML()}</div>
+    </section>
+    <section class="card"><h3>Ancora senza prezzo · ${blank.length}</h3>
+      <p class="muted org-hint">Casella vuota = costo ancora sconosciuto: non entra nel totale. Scrivi l’importo quando lo sai.</p>
+      <div class="org-list">${blank.map(expenseRow).join('') || '<p class="muted">Tutte le voci hanno un prezzo.</p>'}</div>
+    </section>
+    <button class="btn block" data-act="orgAdd" data-list="expenses">${icon('plus')} Aggiungi spesa</button>
+    <button class="btn block ghost" data-act="exportOrg">Esporta spese e incassi (CSV)</button>`;
+}
+
+function incassiPanel() {
+  const o = db.org;
+  return `
+    <section class="card stack"><h3>Biglietti dalla lista Ospiti</h3>
+      <div id="incTickets">${incTicketsHTML()}</div>
+      <label class="field"><span>Di cui omaggi/staff (non pagano)</span><input type="number" inputmode="numeric" min="0" data-org="cfg" data-f="free" value="${o.free}"></label>
+      <p class="muted org-hint">Il prezzo del biglietto si imposta sopra, in «Ipotesi». Per prezzi diversi (es. ragazze/ragazzi) o per gli sconti usa le righe qui sotto: gli sconti si scrivono con il segno meno.</p>
+    </section>
+    <section class="card"><h3>Altri incassi · ${o.incomes.length}</h3>
+      <div class="org-list">${o.incomes.map(incomeRow).join('') || '<p class="muted">Nessun altro incasso.</p>'}</div>
+    </section>
+    <button class="btn block" data-act="orgAdd" data-list="incomes">${icon('plus')} Aggiungi incasso</button>
+    <section class="card"><div class="tot big"><span>Totale incassi</span><b id="incTot">${eur(orgTotals().income)}</b></div></section>`;
+}
+
+function todoPanel() {
+  const T = db.org.todo, done = T.filter(x => x.done).length;
+  const groups = [...new Set(T.map(x => x.group))];
+  const opts = [...groups, ...(groups.includes('Altro') ? [] : ['Altro'])];
+  return `
+    <section class="card stack"><h3>Cose da avere · ${done}/${T.length} prese</h3>
+      <div class="bar"><i style="width:${T.length ? done / T.length * 100 : 0}%"></i></div>
+      <label class="check"><input type="checkbox" data-act="toggleHideDone" ${ui.hideDone ? 'checked' : ''}>Nascondi quelle già prese</label>
+    </section>
+    ${groups.map(gn => {
+      const all = T.filter(x => x.group === gn), items = ui.hideDone ? all.filter(x => !x.done) : all;
+      return items.length ? `<section class="card"><h3>${esc(gn)} · ${all.filter(x => x.done).length}/${all.length}</h3><div class="org-list">${items.map(todoRow).join('')}</div></section>` : '';
+    }).join('')}
+    <form class="card stack" id="todoForm" autocomplete="off"><h3>Aggiungi una voce</h3>
+      <input type="text" name="name" required placeholder="Cosa serve" aria-label="Cosa serve">
+      <div class="cols">
+        <input type="text" name="qty" placeholder="Quantità" aria-label="Quantità">
+        <select name="group" aria-label="Gruppo">${opts.map(g => `<option>${esc(g)}</option>`).join('')}</select>
+      </div>
+      <button class="btn primary block" type="submit">Aggiungi</button>
+    </form>`;
+}
+
+function renderOrgBody() {
+  const y = window.scrollY;
+  $('#orgBody').innerHTML = { spese: spesePanel, incassi: incassiPanel, avere: todoPanel }[ui.org]();
+  window.scrollTo(0, y);
+}
+
+function renderOrganizza() {
+  const o = db.org;
+  const tabs = [['spese', 'Spese'], ['incassi', 'Incassi'], ['avere', 'Da avere']];
+  $('#view').innerHTML = `${storageBanner()}
+    <h1>Organizza</h1>
+    <section class="card" id="orgSummary">${orgSummaryHTML()}</section>
+    <section class="card stack"><h3>Ipotesi</h3>
+      <div class="cols3">
+        <label class="field"><span>Persone previste</span><input type="number" inputmode="numeric" min="0" data-org="cfg" data-f="expected" value="${o.expected}"></label>
+        <label class="field"><span>Prezzo (€)</span><input type="number" inputmode="decimal" min="0" step="0.5" data-org="cfg" data-f="price" value="${o.price}"></label>
+        <label class="field"><span>Imprevisti (%)</span><input type="number" inputmode="decimal" min="0" step="1" data-org="cfg" data-f="buffer" value="${o.buffer}"></label>
+      </div>
+      <p class="muted org-hint">Aggiorna le persone previste con i risultati dei sondaggi: spese a persona, margine e pareggio si ricalcolano.</p>
+    </section>
+    <div class="chips">${tabs.map(([k, l]) => `<button class="chip ${ui.org === k ? 'on' : ''}" data-act="orgTab" data-to="${k}">${l}</button>`).join('')}</div>
+    <div id="orgBody" class="stack"></div>`;
+  renderOrgBody();
+}
+
+function orgChange(t) {
+  const list = t.dataset.org, f = t.dataset.f, o = db.org;
+  if (list === 'cfg') {
+    const v = Math.max(0, orgNum(t.value) ?? 0);
+    o[f] = f === 'expected' || f === 'free' ? Math.round(v) : v;
+    save(); updateOrgDerived();
+    return;
+  }
+  const item = o[list]?.find(x => x.id === t.dataset.id);
+  if (!item) return;
+  if (f === 'amount') item.amount = list === 'expenses' && orgNum(t.value) != null ? Math.max(0, orgNum(t.value)) : orgNum(t.value);
+  else if (t.type === 'checkbox') item[f] = t.checked;
+  else item[f] = t.value.trim();
+  save();
+  if (list === 'todo' && f === 'done') return renderOrgBody();
+  if (list === 'expenses' && f === 'perHead') { renderOrgBody(); return updateOrgDerived(); }
+  if (list === 'expenses' && f === 'paid') t.closest('.org-row')?.classList.toggle('done', t.checked);
+  if (list !== 'todo') updateOrgDerived();
 }
 
 /* ================= scanner QR ================= */
@@ -956,6 +1223,37 @@ const ACTIONS = {
   },
   printAll: () => printTickets(db.guests.slice().sort(byName)),
 
+  orgTab(el) {
+    ui.org = el.dataset.to;
+    $$('[data-act="orgTab"]').forEach(b => b.classList.toggle('on', b === el));
+    renderOrgBody();
+  },
+  toggleHideDone(el) { ui.hideDone = el.checked; renderOrgBody(); },
+  orgAdd(el) {
+    const list = el.dataset.list, id = uid();
+    db.org[list].push(list === 'expenses'
+      ? { id, name: '', amount: null, perHead: false, paid: false, buffer: true, note: '' }
+      : { id, name: '', amount: null, note: '' });
+    save(); renderOrgBody(); updateOrgDerived();
+    const inp = $(`[data-id="${id}"][data-f="name"]`);
+    inp?.focus(); inp?.scrollIntoView({ block: 'center' });
+  },
+  orgDel(el) {
+    const list = el.dataset.list, item = db.org[list].find(x => x.id === el.dataset.id);
+    if (!item) return;
+    if (!confirm(`Eliminare «${item.name || 'questa voce'}»?`)) return;
+    db.org[list] = db.org[list].filter(x => x !== item);
+    save(); renderOrgBody(); updateOrgDerived();
+  },
+  exportOrg() {
+    const o = db.org;
+    download(`spese-incassi-${today()}.csv`, csvOut([
+      ['Tipo', 'Voce', 'Importo (€)', 'A persona', 'Totale previsto (€)', 'Pagata', 'Nota'],
+      ...o.expenses.map(x => ['Spesa', x.name, x.amount ?? '', x.perHead ? 'sì' : '', x.amount == null ? '' : expCost(x), x.paid ? 'sì' : 'no', x.note]),
+      ...o.incomes.map(x => ['Incasso', x.name, x.amount ?? '', '', x.amount ?? '', '', x.note]),
+    ]), 'text/csv');
+  },
+
   addType() {
     db.types.push({ id: 't' + uid(), name: 'Nuovo tipo', price: 0, prepaid: !doorSales() });
     save(); renderSerata();
@@ -1039,6 +1337,8 @@ document.addEventListener('change', e => {
     db.event[k] = t.type === 'checkbox' ? t.checked : t.type === 'number' ? Math.max(0, Math.round(+t.value) || 0) : t.value;
     save(); updateTop();
     if (k === 'doorSales') renderSerata();
+  } else if (t.dataset.org) {
+    orgChange(t);
   } else if (t.dataset.type) {
     const ty = typeById(t.dataset.type), f = t.dataset.field;
     if (f === 'price') ty.price = Math.max(0, +t.value || 0);
@@ -1055,6 +1355,12 @@ document.addEventListener('submit', e => {
   const id = e.target.id;
   if (id === 'guestForm') submitGuest(e.target);
   else if (id === 'walkForm') submitWalkIn(e.target);
+  else if (id === 'todoForm') {
+    const f = new FormData(e.target), name = String(f.get('name')).trim();
+    if (!name) return;
+    db.org.todo.push({ id: uid(), group: f.get('group') || 'Altro', name, qty: String(f.get('qty')).trim(), who: '', done: false });
+    save(); renderOrgBody(); toast(`«${name}» aggiunto`);
+  }
   else if (id === 'scanForm') {
     const input = $('#scanCode');
     if (input.value.trim()) { onScanned(input.value, { force: true }); input.value = ''; }

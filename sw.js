@@ -1,6 +1,6 @@
 /* Service worker: dopo la prima visita l'app si apre anche senza connessione.
    Strategia "stale-while-revalidate": risponde subito dalla cache e intanto si aggiorna. */
-const CACHE = 'guardiano-v2';
+const CACHE = 'guardiano-v3';
 const ASSETS = ['./', 'index.html', 'style.css', 'qr.js', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'vendor/jsqr.js'];
 
 self.addEventListener('install', e => {
