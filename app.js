@@ -86,7 +86,7 @@ function orgDefaults() {
 
 const DEFAULTS = () => ({
   v: 1,
-  event: { name: 'Halloween 2026', date: '2026-10-31', capacity: 0, autoScan: true, sound: true, doorSales: false },
+  event: { name: 'Halloween 2026', date: '2026-10-31', capacity: 0, autoScan: true, sound: true, doorSales: false, ticketMsg: 'Ciao {nome}! Ecco il tuo biglietto per {evento}. Mostra il QR all’ingresso e non condividerlo: vale una sola volta.' },
   types: [
     { id: 'pag', name: 'Pagante', price: 0, prepaid: true },
     { id: 'omaggio', name: 'Omaggio / staff', price: 0, prepaid: true },
@@ -487,6 +487,12 @@ function showTicket(id) {
     if (b && sheetCtx?.canvas === canvas) sheetCtx.file = new File([b], `biglietto-${slug(g.name)}.png`, { type: 'image/png' });
   }, 'image/png');
 }
+/* Messaggio che accompagna il biglietto quando lo condividi (modificabile da Serata → Impostazioni). */
+const ticketText = g => String(db.event.ticketMsg ?? '')
+  .replace(/\{nome\}/gi, g?.name ?? '')
+  .replace(/\{evento\}/gi, db.event.name)
+  .replace(/\{data\}/gi, isNaN(new Date(db.event.date)) ? '' : new Date(db.event.date).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }))
+  .trim();
 const ticketFile = async () => sheetCtx.file || new File([await new Promise(r => sheetCtx.canvas.toBlob(r, 'image/png'))], `biglietto-${slug(byId(sheetCtx.gid).name)}.png`, { type: 'image/png' });
 
 function printTickets(list) {
@@ -692,6 +698,8 @@ function renderSerata() {
       <label class="check"><input type="checkbox" data-set="sound" ${db.event.sound ? 'checked' : ''}>Suoni e vibrazione</label>
       <label class="check"><input type="checkbox" data-set="doorSales" ${ds ? 'checked' : ''}>Vendita alla porta (incasso la sera)</label>
       <p class="muted" style="font-size:13px">${ds ? 'Attiva: si può aggiungere e incassare chi arriva senza biglietto.' : 'Spenta: la lista è di soli paganti. Chi non risulta pagato non entra e alla porta non si incassa niente.'}</p>
+      <label class="field"><span>Messaggio che accompagna il biglietto</span><textarea data-set="ticketMsg" rows="4">${esc(db.event.ticketMsg)}</textarea></label>
+      <p class="muted" style="font-size:13px">Si invia insieme all’immagine quando condividi il biglietto (WhatsApp, Mail…). Puoi usare {nome}, {evento} e {data}: vengono sostituiti con i dati di quella persona e della serata.</p>
     </section>
 
     ${ds ? `<section class="card"><h3>Tipi di biglietto</h3>
@@ -1218,7 +1226,7 @@ const ACTIONS = {
   async ticketShare() {
     const f = sheetCtx.file || await ticketFile();
     if (!navigator.canShare?.({ files: [f] })) return ACTIONS.ticketSave();
-    try { await navigator.share({ files: [f], title: db.event.name, text: `Il tuo biglietto per ${db.event.name}` }); }
+    try { await navigator.share({ files: [f], title: db.event.name, text: ticketText(byId(sheetCtx.gid)) }); }
     catch (e) { if (e.name !== 'AbortError') toast('Condivisione non riuscita.', { kind: 'err' }); }
   },
   printAll: () => printTickets(db.guests.slice().sort(byName)),
