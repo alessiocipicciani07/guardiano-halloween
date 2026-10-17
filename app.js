@@ -1120,10 +1120,14 @@ function importRows(rows) {
   const defType = db.types.find(t => t.prepaid) || db.types[0];
 
   // Reimportare lo stesso file (aggiornato) non deve creare doppioni: chi c'è già si riconosce dal codice o dal nome.
+  // Il nome si confronta senza badare all'ordine, agli spazi o alla punteggiatura («Mercone Daniele» = «Daniele  Mercone»),
+  // così chi ha già ricevuto il QR non viene ricreato con un codice nuovo.
+  const nameKey = s => norm(s).replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean).sort().join(' ');
   const byCode = new Map(db.guests.map(g => [g.code, g]));
   const byName = new Map();
-  for (const g of db.guests) if (!g.walkin) byName.set(norm(g.name), [...(byName.get(norm(g.name)) || []), g]);
+  for (const g of db.guests) if (!g.walkin) byName.set(nameKey(g.name), [...(byName.get(nameKey(g.name)) || []), g]);
   const touched = new Set();
+  const created = [];
   let added = 0, updated = 0, multi = 0, skipped = 0;
   for (const r of data) {
     const name = [cell(r, col.name), cell(r, col.surname)].filter(Boolean).join(' ');
@@ -1135,23 +1139,26 @@ function importRows(rows) {
     const paid = paidRaw ? /^(si|s|y|yes|1|true|x|ok|pagato)$/.test(paidRaw) : undefined;
     if (parseInt(cell(r, col.size), 10) > 1) multi++; // ogni riga vale una persona
     const notes = cell(r, col.notes);
-    let g = (codeRaw && byCode.get(codeRaw)) || (byName.get(norm(name)) || []).find(x => !touched.has(x.id));
+    const byCodeMatch = codeRaw && byCode.get(codeRaw);
+    let g = byCodeMatch || (byName.get(nameKey(name)) || []).find(x => !touched.has(x.id));
     if (g && touched.has(g.id)) g = null; // stesso codice ripetuto nel file
     if (g) {
-      g.name = name;
+      // Chi c'è già resta com'è: il codice (e quindi il QR già inviato) non cambia mai. Si aggiornano solo pagamento, tipo e note.
+      if (byCodeMatch) g.name = name;
       if (type) g.typeId = type.id;
       if (paid !== undefined) g.paid = paid;
-      if (notes) g.notes = notes;
+      if (notes && !norm(g.notes).includes(norm(notes))) g.notes = g.notes ? `${g.notes} · ${notes}` : notes;
       updated++;
     } else {
       g = addGuest({ name, size: 1, typeId: (type || defType).id, code: codeRaw && !byCode.has(codeRaw) ? codeRaw : '', paid, notes });
       byCode.set(g.code, g);
+      created.push(g.name);
       added++;
     }
     touched.add(g.id);
   }
   save(); refresh();
-  toast(`${added} nuovi, ${updated} aggiornati${skipped ? ` · ${skipped} righe senza nome ignorate` : ''}${multi ? ` · ${multi} righe con «Persone» oltre 1: ogni riga vale una persona` : ''}`);
+  toast(`${added} nuovi${added && added <= 6 ? ` (${created.join(', ')})` : ''}, ${updated} aggiornati${skipped ? ` · ${skipped} righe senza nome ignorate` : ''}${multi ? ` · ${multi} righe con «Persone» oltre 1: ogni riga vale una persona` : ''}`);
 }
 
 const DEMO = [
