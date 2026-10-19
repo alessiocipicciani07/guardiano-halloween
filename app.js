@@ -1245,14 +1245,24 @@ const ACTIONS = {
     download(f.name, f, 'image/png');
   },
   async ticketShare() {
+    const g = byId(sheetCtx.gid);
+    if (!g) return;
     const f = sheetCtx.file || await ticketFile();
     if (!navigator.canShare?.({ files: [f] })) return ACTIONS.ticketSave();
-    const g = byId(sheetCtx.gid);
-    try {
-      await navigator.share({ files: [f], title: db.event.name, text: ticketText(g) });
-      if (g && !g.qrSent) { g.qrSent = true; save(); refresh(); toast(`${g.name}: QR segnato come inviato`); }
+    // Si segna come inviato appena tocchi «Condividi»: se il browser sospende l'app mentre si apre WhatsApp, la risposta della
+    // condivisione potrebbe non arrivare mai. Se poi annulli, torna da inviare.
+    const wasSent = g.qrSent;
+    const mark = v => {
+      g.qrSent = v; save(); refresh();
+      const b = $('[data-act="toggleQr"][data-from="ticket"]', sheet);
+      if (b) { b.textContent = v ? 'QR inviato · rimetti da inviare' : 'Segna QR come inviato'; b.classList.toggle('ghost', v); }
+    };
+    if (!wasSent) mark(true);
+    try { await navigator.share({ files: [f], title: db.event.name, text: ticketText(g) }); }
+    catch (e) {
+      if (!wasSent) mark(false);
+      toast(e.name === 'AbortError' ? `Condivisione annullata: ${g.name} è ancora da inviare.` : 'Condivisione non riuscita.', { kind: e.name === 'AbortError' ? '' : 'err' });
     }
-    catch (e) { if (e.name !== 'AbortError') toast('Condivisione non riuscita.', { kind: 'err' }); }
   },
   toggleQr(el) {
     const g = byId(el.dataset.id);

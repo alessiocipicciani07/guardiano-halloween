@@ -2,7 +2,7 @@
    Strategia "rete prima, cache come ripiego": con internet carica sempre la versione più recente
    (così pagina, stili e programma restano della stessa versione); senza internet, o se la rete
    non risponde entro 3 secondi, usa la copia salvata. */
-const CACHE = 'guardiano-v6';
+const CACHE = 'guardiano-v7';
 const ASSETS = ['./', 'index.html', 'style.css', 'qr.js', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'vendor/jsqr.js'];
 const NETWORK_TIMEOUT = 3000;
 
