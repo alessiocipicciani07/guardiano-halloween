@@ -158,7 +158,7 @@ const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // niente 0/O/1/I
 function newCode() {
   const y = new Date(db.event.date).getFullYear();
   const yy = Number.isFinite(y) ? String(y).slice(2) : '26';
-  const used = new Set(db.guests.map(g => g.code));
+  const used = new Set(db.guests.flatMap(g => [g.code, ...(g.oldCodes || [])]));
   for (;;) {
     const body = Array.from(crypto.getRandomValues(new Uint8Array(6)), b => CODE_CHARS[b % 32]).join('');
     const code = `HW${yy}-${body}`;
@@ -323,6 +323,7 @@ function showGuest(id) {
         <button class="btn" data-act="editGuest" data-id="${g.id}">Modifica</button>
       </div>
       <button class="btn block ${g.qrSent ? 'ghost' : 'primary'}" data-act="toggleQr" data-id="${g.id}">${g.qrSent ? 'QR inviato · rimetti da inviare' : 'Segna QR come inviato'}</button>
+      <button class="btn block ghost" data-act="regenCode" data-id="${g.id}">Genera un nuovo QR (annulla il vecchio)</button>
     </div>`, { gid: g.id, onStep: syncGuest, mount: syncGuest });
 }
 
@@ -488,6 +489,7 @@ function showTicket(id) {
       <button class="btn big block primary" data-act="ticketSave">Scarica immagine</button>
       ${navigator.canShare ? `<button class="btn block" data-act="ticketShare">Condividi (WhatsApp, Mail…)</button>` : ''}
       <button class="btn block ${g.qrSent ? 'ghost' : ''}" data-act="toggleQr" data-id="${g.id}" data-from="ticket">${g.qrSent ? 'QR inviato · rimetti da inviare' : 'Segna QR come inviato'}</button>
+      <button class="btn block ghost" data-act="regenCode" data-id="${g.id}">Genera un nuovo QR (annulla il vecchio)</button>
       <button class="btn block ghost" data-act="openGuest" data-id="${g.id}">Indietro</button>
     </div>`, { gid: id, canvas });
   canvas.toBlob(b => {
@@ -1049,6 +1051,11 @@ function onScanned(raw, { force = false } = {}) {
 
   const g = db.guests.find(x => x.code === code);
   if (!g) {
+    const old = db.guests.find(x => (x.oldCodes || []).includes(code));
+    if (old) {
+      beep('bad');
+      return showScanResult('bad', 'QR annullato', `${old.name}: questo QR è stato sostituito da uno nuovo.`, { buttons: [{ act: 'scanOpen', label: 'Apri scheda', id: old.id }, { act: 'resumeScan', label: 'Continua' }] });
+    }
     beep('bad');
     return showScanResult('bad', 'Codice non valido', 'Questo QR non è di questa lista.', { buttons: [{ act: 'resumeScan', label: 'Continua', cls: '' }] });
   }
@@ -1135,6 +1142,7 @@ function importRows(rows) {
   // così chi ha già ricevuto il QR non viene ricreato con un codice nuovo.
   const nameKey = s => norm(s).replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean).sort().join(' ');
   const byCode = new Map(db.guests.map(g => [g.code, g]));
+  const revoked = new Set(db.guests.flatMap(g => g.oldCodes || []));
   const byName = new Map();
   for (const g of db.guests) if (!g.walkin) byName.set(nameKey(g.name), [...(byName.get(nameKey(g.name)) || []), g]);
   const touched = new Set();
@@ -1164,7 +1172,7 @@ function importRows(rows) {
       if (notes && !norm(g.notes).includes(norm(notes))) g.notes = g.notes ? `${g.notes} · ${notes}` : notes;
       updated++;
     } else {
-      g = addGuest({ name, size: 1, typeId: (type || defType).id, code: codeRaw && !byCode.has(codeRaw) ? codeRaw : '', paid, qrSent, notes });
+      g = addGuest({ name, size: 1, typeId: (type || defType).id, code: codeRaw && !byCode.has(codeRaw) && !revoked.has(codeRaw) ? codeRaw : '', paid, qrSent, notes });
       byCode.set(g.code, g);
       created.push(g.name);
       added++;
@@ -1263,6 +1271,17 @@ const ACTIONS = {
       if (!wasSent) mark(false);
       toast(e.name === 'AbortError' ? `Condivisione annullata: ${g.name} è ancora da inviare.` : 'Condivisione non riuscita.', { kind: e.name === 'AbortError' ? '' : 'err' });
     }
+  },
+  regenCode(el) {
+    const g = byId(el.dataset.id);
+    if (!g) return;
+    if (!confirm(`Creo un nuovo QR per «${g.name}»?\nIl QR già inviato smette di funzionare e dovrai mandare quello nuovo.${g.inside ? '\nRisulta già dentro: l’ingresso registrato resta.' : ''}`)) return;
+    g.oldCodes = [...(g.oldCodes || []), g.code];
+    g.code = newCode();
+    g.qrSent = false;
+    save(); refresh();
+    showTicket(g.id);
+    toast(`${g.name}: nuovo QR creato, il vecchio non vale più`);
   },
   toggleQr(el) {
     const g = byId(el.dataset.id);
