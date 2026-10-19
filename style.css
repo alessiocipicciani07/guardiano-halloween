@@ -169,10 +169,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--orange); ou
 .bar.bad i { background: var(--bad); }
 
 /* ---------- liste ---------- */
-.list { display: grid; gap: 8px; }
+.list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; } /* senza minmax(0,…) una nota lunga allarga la colonna e la pagina esce dallo schermo */
 .list-title { display: flex; justify-content: space-between; align-items: baseline; margin: 6px 2px 0; }
 .row {
-  display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; min-height: 64px;
+  display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; padding: 12px 14px; min-height: 64px;
   text-align: left; background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px;
 }
 .row:active { background: var(--bg-3); }
