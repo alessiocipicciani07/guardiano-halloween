@@ -142,7 +142,8 @@ const remaining = g => g.size - g.inside;
 const doorSales = () => !!db.event.doorSales;
 const dueOf = g => (g.paid || !doorSales() ? 0 : typeOf(g).price * g.size);
 const usesTypes = () => doorSales(); // i tipi di biglietto servono solo per i prezzi alla porta: nel modello solo prepagato non si vedono
-const unpaidBlock = g => !doorSales() && !g.paid && remaining(g) > 0; // solo prepagato: chi non risulta pagato non entra
+const needsQr = g => !g.walkin && g.paid && !g.qrSent; // ha pagato ma non gli hai ancora mandato il biglietto
+const unpaidBlock = g =>!doorSales() && !g.paid && remaining(g) > 0; // solo prepagato: chi non risulta pagato non entra
 const insideTotal = () => sum(db.guests, g => g.inside);
 const capacity = () => Number(db.event.capacity) || 0;
 const overCapacity = n => capacity() > 0 && insideTotal() + n > capacity();
@@ -175,6 +176,7 @@ function addGuest(f) {
     typeId: f.typeId || db.types[0].id,
     paid: f.paid ?? (usesTypes() ? isPrepaid(typeById(f.typeId)) : true),
     notes: String(f.notes || '').trim(),
+    qrSent: !!f.qrSent,
     arrivedAt: null,
     createdAt: Date.now(),
     walkin: !!f.walkin,
@@ -312,12 +314,15 @@ function showGuest(id) {
     </div></div>` : '';
   openSheet(`
     <div class="sheet-head"><h2>${esc(g.name)}</h2>${closeBtn()}</div>
-    <div class="meta"><span class="pill ${st}">${STATUS[st]}</span>${usesTypes() ? `<span class="tag">${esc(t.name)}</span>` : ''}${g.size > 1 ? `<span class="tag">${persone(g.size)}</span>` : ''}<span class="tag code">${esc(g.code)}</span></div>
+    <div class="meta"><span class="pill ${st}">${STATUS[st]}</span>${usesTypes() ? `<span class="tag">${esc(t.name)}</span>` : ''}${g.size > 1 ? `<span class="tag">${persone(g.size)}</span>` : ''}<span class="tag code">${esc(g.code)}</span>${needsQr(g) ? '<span class="tag qr">QR da inviare</span>' : g.qrSent ? '<span class="tag">QR inviato</span>' : ''}</div>
     ${g.notes ? `<div class="notebox">${esc(g.notes)}</div>` : ''}
     ${door}${exits}
-    <div class="foot">
-      <button class="btn" data-act="showTicket" data-id="${g.id}">Biglietto QR</button>
-      <button class="btn" data-act="editGuest" data-id="${g.id}">Modifica</button>
+    <div class="stack">
+      <div class="foot">
+        <button class="btn" data-act="showTicket" data-id="${g.id}">Biglietto QR</button>
+        <button class="btn" data-act="editGuest" data-id="${g.id}">Modifica</button>
+      </div>
+      <button class="btn block ${g.qrSent ? 'ghost' : 'primary'}" data-act="toggleQr" data-id="${g.id}">${g.qrSent ? 'QR inviato · rimetti da inviare' : 'Segna QR come inviato'}</button>
     </div>`, { gid: g.id, onStep: syncGuest, mount: syncGuest });
 }
 
@@ -348,6 +353,7 @@ function showEdit(id) {
       <label class="field"><span>Nome e cognome</span><input type="text" name="name" required value="${esc(g?.name)}" autocapitalize="words" placeholder="Es. Giulia Rossi"></label>
       ${usesTypes() ? `<label class="field"><span>Tipo di biglietto</span><select name="typeId">${typeOptions(g?.typeId ?? t0?.id)}</select></label>` : ''}
       <label class="check"><input type="checkbox" name="paid" ${(g ? g.paid : (usesTypes() ? isPrepaid(t0) : true)) ? 'checked' : ''}>Pagamento ricevuto</label>
+      <label class="check"><input type="checkbox" name="qrSent" ${g?.qrSent ? 'checked' : ''}>QR già inviato</label>
       <label class="field"><span>Note (visibili alla porta)</span><textarea name="notes" placeholder="Es. organizzatore, allergie…">${esc(g?.notes)}</textarea></label>
       <button class="btn big block primary" type="submit">${g ? 'Salva' : 'Aggiungi alla lista'}</button>
       <div class="foot">
@@ -364,7 +370,7 @@ function showEdit(id) {
 
 function submitGuest(form) {
   const f = new FormData(form);
-  const data = { name: f.get('name'), size: sheetCtx.gid ? byId(sheetCtx.gid).size : 1, typeId: f.get('typeId') || (sheetCtx.gid ? byId(sheetCtx.gid).typeId : db.types[0].id), paid: f.get('paid') === 'on', notes: f.get('notes') };
+  const data = { name: f.get('name'), size: sheetCtx.gid ? byId(sheetCtx.gid).size : 1, typeId: f.get('typeId') || (sheetCtx.gid ? byId(sheetCtx.gid).typeId : db.types[0].id), paid: f.get('paid') === 'on', qrSent: f.get('qrSent') === 'on', notes: f.get('notes') };
   if (!String(data.name).trim()) return;
   if (sheetCtx.gid) {
     Object.assign(byId(sheetCtx.gid), { ...data, name: data.name.trim(), notes: data.notes.trim() });
@@ -481,6 +487,7 @@ function showTicket(id) {
     <div class="stack">
       <button class="btn big block primary" data-act="ticketSave">Scarica immagine</button>
       ${navigator.canShare ? `<button class="btn block" data-act="ticketShare">Condividi (WhatsApp, Mail…)</button>` : ''}
+      <button class="btn block ${g.qrSent ? 'ghost' : ''}" data-act="toggleQr" data-id="${g.id}" data-from="ticket">${g.qrSent ? 'QR inviato · rimetti da inviare' : 'Segna QR come inviato'}</button>
       <button class="btn block ghost" data-act="openGuest" data-id="${g.id}">Indietro</button>
     </div>`, { gid: id, canvas });
   canvas.toBlob(b => {
@@ -545,6 +552,7 @@ function guestRow(g) {
     g.size > 1 ? persone(g.size) : '',
     st === 'part' ? `dentro ${g.inside}` : '',
     due ? `<span class="due">da pagare ${eur(due)}</span>` : (!g.paid && !doorSales() ? '<span class="due">non pagato</span>' : ''),
+    needsQr(g) ? '<span class="qr">QR da inviare</span>' : '',
   ].filter(Boolean).join(' · ');
   return `<button class="row" data-act="openGuest" data-id="${g.id}">
     <div class="row-main">
@@ -631,6 +639,8 @@ function updateOspiti() {
     ['out', 'Usciti', G.filter(g => statusOf(g) === 'out').length],
   ];
   const unpaid = G.filter(g => !g.paid).length;
+  const toSend = G.filter(needsQr).length;
+  if (toSend) filters.splice(1, 0, ['qr', 'QR da inviare', toSend]);
   if (unpaid) filters.push(['unpaid', 'Non pagati', unpaid]);
   if (!filters.some(f => f[0] === ui.filter)) ui.filter = 'all';
   $('#chips').innerHTML = filters.map(([k, l, n]) => `<button class="chip ${ui.filter === k ? 'on' : ''}" data-filter="${k}">${l}<b>${n}</b></button>`).join('');
@@ -638,6 +648,7 @@ function updateOspiti() {
   let rows = G.slice().sort(byName);
   if (ui.filter === 'in') rows = rows.filter(g => g.inside > 0);
   else if (ui.filter === 'unpaid') rows = rows.filter(g => !g.paid);
+  else if (ui.filter === 'qr') rows = rows.filter(needsQr);
   else if (ui.filter !== 'all') rows = rows.filter(g => statusOf(g) === ui.filter);
   if (ui.gq.trim()) { const ids = new Set(findGuests(ui.gq).map(g => g.id)); rows = rows.filter(g => ids.has(g.id)); }
   $('#guestList').innerHTML = rows.length
@@ -649,7 +660,7 @@ function updateOspiti() {
     <div class="cols"><button class="btn" data-act="importCsv">Importa CSV</button><button class="btn" data-act="csvTemplate">Scarica modello</button></div>
     <button class="btn block" data-act="printAll">Stampa tutti i biglietti QR</button>
     ${G.length ? '' : '<button class="btn block ghost" data-act="demo">Carica ospiti di prova</button>'}
-    <p class="muted" style="font-size:14px">Colonne del CSV: Nome, ${usesTypes() ? 'Tipo, ' : ''}Pagato, Note, Codice; basta Nome. Puoi reimportare il file quando cambia: chi c’è già viene aggiornato (riconosciuto dal codice o dal nome), non duplicato.</p>`;
+    <p class="muted" style="font-size:14px">Colonne del CSV: Nome, ${usesTypes() ? 'Tipo, ' : ''}Pagato, QR inviato, Note, Codice; basta Nome. Puoi reimportare il file quando cambia: chi c’è già viene aggiornato (riconosciuto dal codice o dal nome), non duplicato.</p>`;
 }
 
 /* ---------- Serata ---------- */
@@ -1112,10 +1123,10 @@ function parseCSV(text) {
 function importRows(rows) {
   const head = rows[0].map(norm);
   const find = keys => head.findIndex(h => keys.some(k => h === k || h.startsWith(k)));
-  const col = { name: find(['nome', 'name', 'ospite', 'nominativo']), surname: find(['cognome', 'surname']), size: find(['pers', 'quant', 'num', 'size', 'posti', 'n.']), type: find(['tip', 'biglietto', 'type']), paid: find(['pagat', 'paid']), notes: find(['not']), code: find(['cod']) };
+  const col = { name: find(['nome', 'name', 'ospite', 'nominativo']), surname: find(['cognome', 'surname']), size: find(['pers', 'quant', 'num', 'size', 'posti', 'n.']), type: find(['tip', 'biglietto', 'type']), paid: find(['pagat', 'paid']), qr: find(['qr']), notes: find(['not']), code: find(['cod']) };
   const hasHeader = col.name >= 0 || col.surname >= 0;
   const data = hasHeader ? rows.slice(1) : rows;
-  if (!hasHeader) Object.assign(col, { name: 0, surname: -1, size: rows[0].length > 1 && /^\d+$/.test(rows[0][1].trim()) ? 1 : -1, type: -1, paid: -1, notes: -1, code: -1 });
+  if (!hasHeader) Object.assign(col, { name: 0, surname: -1, size: rows[0].length > 1 && /^\d+$/.test(rows[0][1].trim()) ? 1 : -1, type: -1, paid: -1, qr: -1, notes: -1, code: -1 });
   const cell = (r, i) => (i >= 0 ? String(r[i] ?? '').trim() : '');
   const defType = db.types.find(t => t.prepaid) || db.types[0];
 
@@ -1137,6 +1148,8 @@ function importRows(rows) {
     const type = usesTypes() && typeName ? db.types.find(t => norm(t.name) === norm(typeName)) : null;
     const paidRaw = norm(cell(r, col.paid));
     const paid = paidRaw ? /^(si|s|y|yes|1|true|x|ok|pagato)$/.test(paidRaw) : undefined;
+    const qrRaw = norm(cell(r, col.qr));
+    const qrSent = qrRaw ? /^(si|s|y|yes|1|true|x|ok|inviato)$/.test(qrRaw) : undefined; // vuoto = non toccare
     if (parseInt(cell(r, col.size), 10) > 1) multi++; // ogni riga vale una persona
     const notes = cell(r, col.notes);
     const byCodeMatch = codeRaw && byCode.get(codeRaw);
@@ -1147,10 +1160,11 @@ function importRows(rows) {
       if (byCodeMatch) g.name = name;
       if (type) g.typeId = type.id;
       if (paid !== undefined) g.paid = paid;
+      if (qrSent !== undefined) g.qrSent = qrSent;
       if (notes && !norm(g.notes).includes(norm(notes))) g.notes = g.notes ? `${g.notes} · ${notes}` : notes;
       updated++;
     } else {
-      g = addGuest({ name, size: 1, typeId: (type || defType).id, code: codeRaw && !byCode.has(codeRaw) ? codeRaw : '', paid, notes });
+      g = addGuest({ name, size: 1, typeId: (type || defType).id, code: codeRaw && !byCode.has(codeRaw) ? codeRaw : '', paid, qrSent, notes });
       byCode.set(g.code, g);
       created.push(g.name);
       added++;
@@ -1233,8 +1247,20 @@ const ACTIONS = {
   async ticketShare() {
     const f = sheetCtx.file || await ticketFile();
     if (!navigator.canShare?.({ files: [f] })) return ACTIONS.ticketSave();
-    try { await navigator.share({ files: [f], title: db.event.name, text: ticketText(byId(sheetCtx.gid)) }); }
+    const g = byId(sheetCtx.gid);
+    try {
+      await navigator.share({ files: [f], title: db.event.name, text: ticketText(g) });
+      if (g && !g.qrSent) { g.qrSent = true; save(); refresh(); toast(`${g.name}: QR segnato come inviato`); }
+    }
     catch (e) { if (e.name !== 'AbortError') toast('Condivisione non riuscita.', { kind: 'err' }); }
+  },
+  toggleQr(el) {
+    const g = byId(el.dataset.id);
+    if (!g) return;
+    g.qrSent = !g.qrSent;
+    save(); refresh();
+    if (el.dataset.from === 'ticket') showTicket(g.id); else showGuest(g.id);
+    toast(g.qrSent ? `${g.name}: QR segnato come inviato` : `${g.name}: QR da inviare`);
   },
   printAll: () => printTickets(db.guests.slice().sort(byName)),
 
@@ -1283,19 +1309,19 @@ const ACTIONS = {
 
   csvTemplate() {
     const T = usesTypes(), first = db.types[0].name, last = db.types[db.types.length - 1].name;
-    const row = (name, type, paid, notes) => [name, ...(T ? [type] : []), paid, notes];
+    const row = (name, type, paid, qr, notes) => [name, ...(T ? [type] : []), paid, qr, notes];
     download('modello-ospiti.csv', csvOut([
-      ['Nome', ...(T ? ['Tipo'] : []), 'Pagato', 'Note'],
-      row('Giulia Rossi', first, 'sì', ''),
-      row('Marco Bianchi', first, 'no', 'Bonifico in arrivo'),
-      row('Elena Ferrari', last, 'sì', 'Organizzatrice'),
+      ['Nome', ...(T ? ['Tipo'] : []), 'Pagato', 'QR inviato', 'Note'],
+      row('Giulia Rossi', first, 'sì', 'sì', ''),
+      row('Marco Bianchi', first, 'no', '', 'Bonifico in arrivo'),
+      row('Elena Ferrari', last, 'sì', '', 'Organizzatrice'),
     ]), 'text/csv');
   },
   exportGuests() {
     const T = usesTypes(), P = db.guests.some(g => g.size > 1);
     download(`ospiti-${today()}.csv`, csvOut([
-      ['Codice', 'Nome', ...(P ? ['Persone'] : []), ...(T ? ['Tipo'] : []), 'Pagato', 'Dentro ora', 'Primo ingresso', 'Note'],
-      ...db.guests.slice().sort(byName).map(g => [g.code, g.name, ...(P ? [g.size] : []), ...(T ? [typeOf(g).name] : []), g.paid ? 'sì' : 'no', g.inside, g.arrivedAt ? hhmm(g.arrivedAt) : '', g.notes]),
+      ['Codice', 'Nome', ...(P ? ['Persone'] : []), ...(T ? ['Tipo'] : []), 'Pagato', 'QR inviato', 'Dentro ora', 'Primo ingresso', 'Note'],
+      ...db.guests.slice().sort(byName).map(g => [g.code, g.name, ...(P ? [g.size] : []), ...(T ? [typeOf(g).name] : []), g.paid ? 'sì' : 'no', g.qrSent ? 'sì' : 'no', g.inside, g.arrivedAt ? hhmm(g.arrivedAt) : '', g.notes]),
     ]), 'text/csv');
   },
   exportLog() {
