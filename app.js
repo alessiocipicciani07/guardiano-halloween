@@ -10,6 +10,8 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const sum = (arr, fn) => arr.reduce((s, x) => s + fn(x), 0);
 const norm = s => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+/* Chiave del nome per riconoscere lo stesso ospite: ignora maiuscole, accenti, spazi, punteggiatura e ordine delle parole. */
+const nameKey = s => norm(s).replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean).sort().join(' ');
 const hhmm = t => new Date(t).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
 const eur = n => '€' + (Math.round(n * 100) / 100).toLocaleString('it-IT', { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 });
 const persone = n => `${n} ${n === 1 ? 'persona' : 'persone'}`;
@@ -352,6 +354,7 @@ function showEdit(id) {
     <div class="sheet-head"><h2>${g ? 'Modifica ospite' : 'Nuovo ospite'}</h2>${closeBtn()}</div>
     <form id="guestForm" class="stack" autocomplete="off">
       <label class="field"><span>Nome e cognome</span><input type="text" name="name" required value="${esc(g?.name)}" autocapitalize="words" placeholder="Es. Giulia Rossi"></label>
+      <div class="alert bad" id="nameErr" role="alert" hidden></div>
       ${usesTypes() ? `<label class="field"><span>Tipo di biglietto</span><select name="typeId">${typeOptions(g?.typeId ?? t0?.id)}</select></label>` : ''}
       <label class="check"><input type="checkbox" name="paid" ${(g ? g.paid : (usesTypes() ? isPrepaid(t0) : true)) ? 'checked' : ''}>Pagamento ricevuto</label>
       <label class="check"><input type="checkbox" name="qrSent" ${g?.qrSent ? 'checked' : ''}>QR già inviato</label>
@@ -363,6 +366,7 @@ function showEdit(id) {
       </div>
     </form>`, { gid: g?.id, paidTouched: !!g });
   const form = $('#guestForm', sheet);
+  $('[name=name]', form).addEventListener('input', () => { $('#nameErr', form).hidden = true; });
   $('[name=paid]', form).addEventListener('change', () => { sheetCtx.paidTouched = true; });
   $('[name=typeId]', form)?.addEventListener('change', e => {
     if (!sheetCtx.paidTouched) $('[name=paid]', form).checked = isPrepaid(typeById(e.target.value));
@@ -373,6 +377,14 @@ function submitGuest(form) {
   const f = new FormData(form);
   const data = { name: f.get('name'), size: sheetCtx.gid ? byId(sheetCtx.gid).size : 1, typeId: f.get('typeId') || (sheetCtx.gid ? byId(sheetCtx.gid).typeId : db.types[0].id), paid: f.get('paid') === 'on', qrSent: f.get('qrSent') === 'on', notes: f.get('notes') };
   if (!String(data.name).trim()) return;
+  const dup = db.guests.find(g => g.id !== sheetCtx.gid && !g.walkin && nameKey(g.name) === nameKey(data.name));
+  if (dup) {
+    const err = $('#nameErr', form);
+    err.textContent = `«${data.name.trim()}» è già in lista (${dup.name}): non posso inserirlo due volte. Se è un omonimo, aggiungi qualcosa al nome, per esempio «${data.name.trim()} (2)».`;
+    err.hidden = false;
+    $('[name=name]', form).focus();
+    return;
+  }
   if (sheetCtx.gid) {
     Object.assign(byId(sheetCtx.gid), { ...data, name: data.name.trim(), notes: data.notes.trim() });
     save(); refresh();
@@ -1140,7 +1152,6 @@ function importRows(rows) {
   // Reimportare lo stesso file (aggiornato) non deve creare doppioni: chi c'è già si riconosce dal codice o dal nome.
   // Il nome si confronta senza badare all'ordine, agli spazi o alla punteggiatura («Mercone Daniele» = «Daniele  Mercone»),
   // così chi ha già ricevuto il QR non viene ricreato con un codice nuovo.
-  const nameKey = s => norm(s).replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean).sort().join(' ');
   const byCode = new Map(db.guests.map(g => [g.code, g]));
   const revoked = new Set(db.guests.flatMap(g => g.oldCodes || []));
   const byName = new Map();
