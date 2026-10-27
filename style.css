@@ -360,3 +360,9 @@ dialog::backdrop { background: rgba(4, 2, 8, .74); backdrop-filter: blur(3px); }
 .shot .shot-warns:empty { display: none; }
 .shot .alert { font-size: 14px; padding: 9px 12px; font-weight: 600; }
 .shots-foot { position: sticky; bottom: calc(-22px - var(--safe-b)); padding: 12px 0 calc(8px + var(--safe-b)); background: linear-gradient(transparent, var(--bg-2) 18%); }
+
+/* ---------- ordinamento lista ---------- */
+.sortrow { display: flex; align-items: center; gap: 12px; }
+.sortrow span { color: var(--muted); font-size: 14px; font-weight: 650; white-space: nowrap; }
+.sortrow select { flex: 1; min-width: 0; }
+.letter { margin: 8px 4px 0; font: 700 13px var(--sans); letter-spacing: .12em; color: var(--orange-hi); }

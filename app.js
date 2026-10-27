@@ -18,6 +18,17 @@ const persone = n => `${n} ${n === 1 ? 'persona' : 'persone'}`;
 const today = () => new Date().toISOString().slice(0, 10);
 const slug = s => norm(s).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'ospite';
 const byName = (a, b) => a.name.localeCompare(b.name, 'it', { sensitivity: 'base' });
+/* «Nome Cognome» → nome e cognome; i cognomi con particella («De Benedittis», «Di Paolo») restano interi. */
+const PARTICLES = new Set(['de', 'di', 'da', 'del', 'della', 'dei', 'degli', 'delle', 'dal', 'dalla', 'dello', 'la', 'lo', 'le', 'li', 'van', 'von', 'der', 'den', 'el', 'al', 'san']);
+function splitName(name) {
+  const t = String(name ?? '').replace(/\([^)]*\)/g, ' ').split(/\s+/).filter(Boolean); // «Rebecca Loreti (2)» → «Rebecca Loreti»
+  if (t.length < 2) return { given: '', family: t.join(' ') };
+  let i = t.length - 1;
+  while (i > 1 && PARTICLES.has(norm(t[i - 1]).replace(/'/g, ''))) i--;
+  return { given: t.slice(0, i).join(' '), family: t.slice(i).join(' ') };
+}
+const cmp = (a, b) => a.localeCompare(b, 'it', { sensitivity: 'base' });
+const byFamily = (a, b) => { const x = splitName(a.name), y = splitName(b.name); return cmp(x.family, y.family) || cmp(x.given, y.given) || byName(a, b); };
 
 const ICON = {
   search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
@@ -531,7 +542,10 @@ function printTickets(list) {
 window.addEventListener('afterprint', () => { $('#print').innerHTML = ''; });
 
 /* ================= viste ================= */
-const ui = { tab: 'porta', q: '', gq: '', filter: 'all', org: 'spese', hideDone: false };
+/* Ordinamento della lista Ospiti (la scelta resta salvata su questo telefono). */
+const SORTS = [['nome', 'Nome (A-Z)'], ['cognome', 'Cognome (A-Z)'], ['recenti', 'Ultimi aggiunti'], ['arrivo', 'Ultimi arrivati']];
+const loadSort = () => { try { const v = localStorage.getItem('guardiano.sort'); return SORTS.some(x => x[0] === v) ? v : 'nome'; } catch { return 'nome'; } };
+const ui = { tab: 'porta', q: '', gq: '', filter: 'all', org: 'spese', hideDone: false, sort: loadSort() };
 
 function setTab(t) {
   ui.tab = t;
@@ -639,6 +653,7 @@ function renderOspiti() {
   $('#view').innerHTML = `
     <div class="head-row"><h1>Ospiti</h1><span class="grow"></span><button class="btn sq" data-act="shots" aria-label="Aggiungi dagli screenshot dei bonifici" title="Aggiungi dagli screenshot dei bonifici">${icon('image')}</button><button class="btn primary" data-act="addGuest">${icon('plus')} Aggiungi</button></div>
     <label class="search">${icon('search')}<input id="gq" type="search" inputmode="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Cerca nella lista…" value="${esc(ui.gq)}" aria-label="Cerca nella lista"></label>
+    <label class="sortrow"><span>Ordina per</span><select id="sortSel" aria-label="Ordina la lista">${SORTS.map(([k, l]) => `<option value="${k}" ${ui.sort === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <div class="chips" id="chips"></div>
     <div id="guestList" class="list"></div>
     <section class="card stack" id="listTools"></section>`;
@@ -660,14 +675,22 @@ function updateOspiti() {
   if (!filters.some(f => f[0] === ui.filter)) ui.filter = 'all';
   $('#chips').innerHTML = filters.map(([k, l, n]) => `<button class="chip ${ui.filter === k ? 'on' : ''}" data-filter="${k}">${l}<b>${n}</b></button>`).join('');
 
-  let rows = G.slice().sort(byName);
+  let rows = G.slice();
+  if (ui.sort === 'cognome') rows.sort(byFamily);
+  else if (ui.sort === 'recenti') { const at = new Map(G.map((g, i) => [g, i])); rows.sort((a, b) => (b.createdAt - a.createdAt) || (at.get(b) - at.get(a))); }
+  else if (ui.sort === 'arrivo') rows.sort((a, b) => (b.arrivedAt || 0) - (a.arrivedAt || 0) || byName(a, b));
+  else rows.sort(byName);
   if (ui.filter === 'in') rows = rows.filter(g => g.inside > 0);
   else if (ui.filter === 'unpaid') rows = rows.filter(g => !g.paid);
   else if (ui.filter === 'qr') rows = rows.filter(needsQr);
   else if (ui.filter !== 'all') rows = rows.filter(g => statusOf(g) === ui.filter);
   if (ui.gq.trim()) { const ids = new Set(findGuests(ui.gq).map(g => g.id)); rows = rows.filter(g => ids.has(g.id)); }
+  // A-Z: una lettera di intestazione quando cambia l'iniziale, per scorrere 250 nomi più in fretta
+  const letterOf = g => (norm(ui.sort === 'cognome' ? splitName(g.name).family : g.name)[0] || '#').toUpperCase().replace(/[^A-Z]/, '#');
+  const lettered = ui.sort === 'nome' || ui.sort === 'cognome';
+  let last = '';
   $('#guestList').innerHTML = rows.length
-    ? rows.map(guestRow).join('')
+    ? rows.map(g => { const L = lettered ? letterOf(g) : ''; const head = L && L !== last ? `<div class="letter">${L}</div>` : ''; last = L || last; return head + guestRow(g); }).join('')
     : `<div class="empty"><p>${G.length ? 'Nessun ospite corrisponde ai filtri.' : 'Ancora nessun ospite in lista.'}</p></div>`;
 
   $('#listTools').innerHTML = `
@@ -1646,7 +1669,11 @@ document.addEventListener('keydown', e => {
 
 document.addEventListener('change', e => {
   const t = e.target;
-  if (t.dataset.set) {
+  if (t.id === 'sortSel') {
+    ui.sort = t.value;
+    try { localStorage.setItem('guardiano.sort', ui.sort); } catch { /* preferenza non salvata */ }
+    updateOspiti();
+  } else if (t.dataset.set) {
     const k = t.dataset.set;
     db.event[k] = t.type === 'checkbox' ? t.checked : t.type === 'number' ? Math.max(0, Math.round(+t.value) || 0) : t.value;
     save(); updateTop();
