@@ -24,6 +24,7 @@ const ICON = {
   scan: '<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/>',
 };
 const icon = name => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
 
@@ -636,7 +637,7 @@ function updatePorta() {
 /* ---------- Ospiti ---------- */
 function renderOspiti() {
   $('#view').innerHTML = `
-    <div class="head-row"><h1>Ospiti</h1><span class="grow"></span><button class="btn primary" data-act="addGuest">${icon('plus')} Aggiungi</button></div>
+    <div class="head-row"><h1>Ospiti</h1><span class="grow"></span><button class="btn sq" data-act="shots" aria-label="Aggiungi dagli screenshot dei bonifici" title="Aggiungi dagli screenshot dei bonifici">${icon('image')}</button><button class="btn primary" data-act="addGuest">${icon('plus')} Aggiungi</button></div>
     <label class="search">${icon('search')}<input id="gq" type="search" inputmode="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Cerca nella lista…" value="${esc(ui.gq)}" aria-label="Cerca nella lista"></label>
     <div class="chips" id="chips"></div>
     <div id="guestList" class="list"></div>
@@ -671,6 +672,7 @@ function updateOspiti() {
 
   $('#listTools').innerHTML = `
     <h3>Lista · ${G.length === sum(G, g => g.size) ? persone(G.length) : `${G.length} nominativi, ${persone(sum(G, g => g.size))}`}</h3>
+    <button class="btn block" data-act="shots">${icon('image')} Aggiungi dagli screenshot dei bonifici</button>
     <div class="cols"><button class="btn" data-act="importCsv">Importa CSV</button><button class="btn" data-act="csvTemplate">Scarica modello</button></div>
     <button class="btn block" data-act="printAll">Stampa tutti i biglietti QR</button>
     ${G.length ? '' : '<button class="btn block ghost" data-act="demo">Carica ospiti di prova</button>'}
@@ -1205,6 +1207,235 @@ function loadDemo() {
   toast('Ospiti di prova aggiunti. Ricordati di “Azzerare la serata” prima dell’evento.');
 }
 
+/* ================= bonifici da screenshot ================= */
+/* Legge gli screenshot dell'app della banca (chi paga, causale, importo, data) e mette i paganti in lista già segnati come
+   pagati. Il riconoscimento del testo (OCR) gira sul telefono: le immagini non vengono inviate a nessuno.
+   L'interpretazione del testo è in bonifico.js; il motore OCR (vendor/tesseract) si scarica solo al primo uso. */
+const shots = { items: [], worker: null, status: null, run: 0, seq: 0 };
+
+const loadScript = src => new Promise((resolve, reject) => {
+  const el = document.createElement('script');
+  el.src = src;
+  el.onload = resolve;
+  el.onerror = () => reject(new Error('non trovato: ' + src));
+  document.head.append(el);
+});
+
+async function getOcr() {
+  if (shots.worker) return shots.worker;
+  if (!window.Tesseract) await loadScript('vendor/tesseract/tesseract.min.js');
+  const abs = p => new URL(p, location.href).href; // il motore gira in un worker: vuole indirizzi assoluti
+  shots.worker = await Tesseract.createWorker('ita', 1, {
+    workerPath: abs('vendor/tesseract/worker.min.js'),
+    corePath: abs('vendor/tesseract'),
+    langPath: abs('vendor/tesseract/lang'),
+    gzip: true,
+    logger: m => shots.status?.(m),
+  });
+  return shots.worker;
+}
+async function stopOcr() {
+  const w = shots.worker;
+  shots.worker = null;
+  try { await w?.terminate(); } catch { /* già chiuso */ }
+}
+
+/* Screenshot da telefono: si tiene solo la parte alta (importo, nome, causale, data); sotto ci sono solo i pulsanti. */
+async function shotImage(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const w = img.naturalWidth, h = img.naturalHeight, tall = h / w > 1.6;
+    const sy = tall ? Math.round(h * 0.06) : 0, sh = tall ? Math.round(h * 0.66) : h;
+    const k = Math.min(1, 1400 / w);
+    const c = document.createElement('canvas');
+    c.width = Math.round(w * k); c.height = Math.round(sh * k);
+    c.getContext('2d').drawImage(img, 0, sy, w, sh, 0, 0, c.width, c.height);
+    return await new Promise((ok, no) => c.toBlob(b => (b ? ok(b) : no(new Error('immagine'))), 'image/png'));
+  } finally { URL.revokeObjectURL(url); }
+}
+
+/* Nomi di battesimo già in lista: aiutano a capire se in «ROSSI MARIO» il nome è il secondo. */
+function knownFirstNames() {
+  const set = new Set();
+  for (const g of db.guests) {
+    const t = norm(g.name).replace(/[^a-z' ]+/g, ' ').split(/\s+/).filter(Boolean);
+    if (t.length > 1) set.add(t[0].replace(/'/g, ''));
+  }
+  return set;
+}
+
+const shotDate = p => (p.date ? `${p.date.slice(8)}/${p.date.slice(5, 7)}` : '');
+function shotNote(it) {
+  const p = it.p, d = shotDate(p);
+  return [
+    `${p.instant ? 'bonifico istantaneo' : 'bonifico'}${d ? ' ' + d : ''}${p.time ? ' ore ' + p.time : ''}`,
+    it.paidBy ? ` fatto da ${it.paidBy}` : '',
+    p.causale ? ` (causale: ${p.causale})` : ', senza causale',
+    it.people > 1 ? ` · ${eur(p.amount)} per ${it.people} persone` : '',
+    p.pending ? ' · risultava ancora in corso' : '',
+  ].join('');
+}
+
+function shotNames(it) { return [it.name, ...it.extra].map(n => n.trim()).filter(Boolean); }
+
+/* Avvisi di una scheda: si ricalcolano mentre correggi il nome. */
+function shotWarnings(it, idx) {
+  const w = [], p = it.p, names = shotNames(it);
+  if (!p.ok) w.push({ kind: 'bad', text: 'Non riesco a leggere questo screenshot: scrivi il nome a mano oppure riprova con un’immagine più nitida.' });
+  if (p.ok && it.people > 1) w.push({ kind: 'warn', text: `${eur(p.amount)} coprono ${it.people} persone: scrivi anche gli altri nomi.` });
+  if (p.ok && (p.amount % it.price !== 0 || p.amount < it.price)) w.push({ kind: 'warn', text: `Importo ${eur(p.amount)}: il biglietto costa ${eur(it.price)}.` });
+  if (p.pending) w.push({ kind: 'warn', text: 'Bonifico ancora «in corso»: controlla che arrivi sul conto.' });
+  if (it.uncertain && it.name) w.push({ kind: 'warn', text: it.hint || 'Controlla nome e cognome: non so quale sia il nome.' });
+  if (it.paidBy) w.push({ kind: 'info', text: `Ha pagato ${it.paidBy} per questa persona.` });
+
+  // già inserito? (stesso bonifico caricato due volte, o persona già in lista)
+  const refs = names.flatMap(n => Bonifico.refs(p, n));
+  const hit = db.guests.find(g => (g.payRefs || []).some(r => refs.includes(r)));
+  if (hit) w.push({ kind: 'bad', text: `Questo bonifico è già stato inserito per «${hit.name}».` });
+  const prev = shots.items.slice(0, idx).find(o => {
+    const theirs = shotNames(o);
+    return theirs.length && (Bonifico.refs(o.p, o.name).some(r => refs.includes(r)) || names.some(n => theirs.some(m => nameKey(m) === nameKey(n))));
+  });
+  if (prev) w.push({ kind: 'bad', text: 'Questa persona compare già in un altro screenshot di questa serie: è lo stesso bonifico?' });
+  for (const n of names) {
+    const k = nameKey(n);
+    const same = db.guests.find(g => !g.walkin && nameKey(g.name) === k);
+    if (same) w.push({ kind: same.paid ? 'bad' : 'info', text: same.paid ? `«${same.name}» è già in lista e già pagato.` : `«${same.name}» è già in lista ma non pagato: lo segno come pagato.` });
+    else {
+      const near = db.guests.find(g => !g.walkin && k.length > 5 && Bonifico.lev(nameKey(g.name), k) <= 2);
+      if (near) w.push({ kind: 'warn', text: `Somiglia a «${near.name}», già in lista: è la stessa persona?` });
+    }
+  }
+  return w;
+}
+
+function shotCard(it, i) {
+  const p = it.p, d = shotDate(p);
+  const meta = p.ok
+    ? `${eur(p.amount)} · ${d ? d + (p.dateGuess ? ' (dallo screenshot)' : '') : 'data non letta'} · ${p.instant ? 'bonifico istantaneo' : 'bonifico'}${it.paidBy ? ` · pagato da ${esc(it.paidBy)}` : ` · da ${esc(Bonifico.titleCase(p.sender))}`}${p.causale ? ` · causale «${esc(p.causale)}»` : ' · senza causale'}`
+    : esc(it.file);
+  return `<div class="shot card stack" data-i="${i}">
+    <label class="check"><input type="checkbox" data-shot="on" ${it.on ? 'checked' : ''}>Aggiungi alla lista</label>
+    ${[it.name, ...it.extra].map((n, k) => `<input type="text" data-shot="name" data-k="${k}" value="${esc(n)}" placeholder="${k ? 'Nome persona ' + (k + 1) : 'Nome e cognome'}" autocapitalize="words" autocomplete="off" aria-label="${k ? 'Nome persona ' + (k + 1) : 'Nome e cognome'}">`).join('')}
+    <div class="sub">${meta}</div>
+    <div class="shot-warns stack">${shotWarnings(it, i).map(x => `<div class="alert ${x.kind}">${esc(x.text)}</div>`).join('')}</div>
+  </div>`;
+}
+
+function shotCount() { return sum(shots.items.filter(it => it.on), it => shotNames(it).length); }
+function updateShotsFoot() {
+  const n = shotCount(), b = $('[data-act="shotsApply"]', sheet);
+  if (b) { b.disabled = !n; b.textContent = n ? `Aggiungi ${persone(n)}` : 'Niente da aggiungere'; }
+}
+
+function renderShots() {
+  const items = shots.items;
+  openSheet(`
+    <div class="sheet-head"><h2>Bonifici da screenshot</h2>${closeBtn()}</div>
+    <p class="muted" style="margin:0">Controlla i nomi e correggi quelli sbagliati. Gli screenshot restano sul telefono.</p>
+    ${items.map(shotCard).join('')}
+    <div class="stack shots-foot">
+      <button class="btn big block primary" data-act="shotsApply"></button>
+      <button class="btn block" data-act="shots">Aggiungi altri screenshot</button>
+    </div>`, { shots: true });
+  updateShotsFoot();
+}
+
+async function startShots(files) {
+  const imgs = [...files].filter(f => /^image\//.test(f.type) || /\.(png|jpe?g|heic|webp)$/i.test(f.name));
+  if (!imgs.length) return toast('Scegli uno o più screenshot (immagini).', { kind: 'err' });
+  const run = ++shots.run;
+  const body = msg => $('#shotsBody', sheet) && ($('#shotsBody', sheet).innerHTML = msg);
+  openSheet(`<div class="sheet-head"><h2>Bonifici da screenshot</h2>${closeBtn()}</div>
+    <div id="shotsBody" class="stack"></div>`, { shots: true, run });
+  const say = (t, pct) => body(`<p style="margin:0">${esc(t)}</p><div class="bar"><i style="width:${Math.round((pct || 0) * 100)}%"></i></div><p class="muted" style="margin:0;font-size:14px">Il lettore di testo gira sul telefono; la prima volta ci mette qualche secondo in più.</p>`);
+  const alive = () => run === shots.run && sheet.open && sheetCtx?.shots;
+  try {
+    say('Carico il lettore di testo…', 0);
+    shots.status = m => {
+      if (!alive()) return;
+      if (/loading|initializing/.test(m.status || '')) say('Carico il lettore di testo…', m.progress || 0);
+    };
+    const worker = await getOcr();
+    const fresh = [];
+    for (let i = 0; i < imgs.length; i++) {
+      if (!alive()) return;
+      say(`Leggo lo screenshot ${i + 1} di ${imgs.length}…`, i / imgs.length);
+      const f = imgs[i];
+      let text = '';
+      try { text = (await worker.recognize(await shotImage(f))).data.text; } catch (e) { console.error(e); }
+      const p = Bonifico.parse(text);
+      if (p.ok && !p.date && f.lastModified) { // alcuni screenshot dicono solo «OGGI»: vale il giorno in cui è stato fatto lo screenshot
+        const d = new Date(f.lastModified), z = n => String(n).padStart(2, '0');
+        p.date = `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`;
+        p.dateGuess = true;
+      }
+      const s = p.ok ? Bonifico.suggestName(p, knownFirstNames()) : { name: '', paidBy: '', uncertain: false, note: '' };
+      const price = Number(db.org?.price) || 20;
+      const people = p.ok ? Math.max(1, Math.round(p.amount / price)) : 1;
+      fresh.push({ file: f.name, p, name: s.name, paidBy: s.paidBy, uncertain: s.uncertain, hint: s.note, price, people, extra: Array(people - 1).fill(''), on: p.ok && !!s.name });
+    }
+    if (!alive()) return;
+    shots.items = fresh;
+    // quello che è già stato inserito, o è un doppione, parte deselezionato
+    fresh.forEach((it, i) => { if (shotWarnings(it, i).some(x => x.kind === 'bad')) it.on = false; });
+    renderShots();
+  } catch (e) {
+    console.error(e);
+    if (alive()) body(`<div class="alert bad">Non riesco ad avviare il lettore di testo. Controlla la connessione e riprova.</div><button class="btn block" data-act="closeSheet">Chiudi</button>`);
+  } finally {
+    await stopOcr();
+  }
+}
+
+function applyShots() {
+  const added = [], updated = [];
+  for (const it of shots.items) {
+    if (!it.on) continue;
+    for (const name of shotNames(it)) {
+      const note = shotNote(it), refs = Bonifico.refs(it.p, name);
+      const same = db.guests.find(g => !g.walkin && nameKey(g.name) === nameKey(name));
+      if (same) {
+        same.paid = true;
+        if (!norm(same.notes).includes(norm(note))) same.notes = same.notes ? `${same.notes} · ${note}` : note;
+        same.payRefs = [...new Set([...(same.payRefs || []), ...refs])];
+        updated.push(same.name);
+      } else {
+        const g = addGuest({ name, size: 1, paid: true, notes: note });
+        g.payRefs = refs;
+        added.push(g.name);
+      }
+    }
+  }
+  save(); refresh(); closeSheet();
+  const list = a => (a.length <= 4 ? ` (${a.join(', ')})` : '');
+  toast(`${added.length} aggiunti${list(added)}${updated.length ? ` · ${updated.length} già in lista, segnati pagati${list(updated)}` : ''}. Ora manda i QR.`);
+}
+
+$('#fileShots').addEventListener('change', e => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (files.length) startShots(files);
+});
+sheet.addEventListener('input', e => {
+  const t = e.target;
+  if (!sheetCtx?.shots || t.dataset.shot !== 'name') return;
+  const card = t.closest('.shot'), it = shots.items[+card.dataset.i], k = +t.dataset.k;
+  if (k) it.extra[k - 1] = t.value; else it.name = t.value;
+  it.uncertain = false; // l'hai corretto tu
+  $('.shot-warns', card).innerHTML = shotWarnings(it, +card.dataset.i).map(x => `<div class="alert ${x.kind}">${esc(x.text)}</div>`).join('');
+  updateShotsFoot();
+});
+sheet.addEventListener('change', e => {
+  const t = e.target;
+  if (!sheetCtx?.shots || t.dataset.shot !== 'on') return;
+  shots.items[+t.closest('.shot').dataset.i].on = t.checked;
+  updateShotsFoot();
+});
+
 /* ================= azioni ================= */
 const ACTIONS = {
   closeSheet,
@@ -1219,6 +1450,8 @@ const ACTIONS = {
   showTicket: el => showTicket(el.dataset.id),
   demo: loadDemo,
   importCsv: () => $('#fileCsv').click(),
+  shots: () => $('#fileShots').click(),
+  shotsApply: applyShots,
   restore: () => $('#fileBackup').click(),
 
   step(el) {
